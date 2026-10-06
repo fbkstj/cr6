@@ -3,100 +3,259 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI 避障搜尋自走車 第一版規劃</title>
+<title>AI 避障搜尋自走車　專題實作手冊</title>
 <style>
+  :root {
+    --bg: #f8fafc;
+    --card: #ffffff;
+    --border: #cbd5e1;
+    --text: #0f172a;
+    --muted: #475569;
+    --primary: #0369a1;
+    --primary-soft: #e0f2fe;
+    --accent: #a16207;
+    --accent-soft: #fef9c3;
+    --danger: #b91c1c;
+    --danger-soft: #fef2f2;
+    --ok: #047857;
+    --ok-soft: #ecfdf5;
+    --code-bg: #0f172a;
+    --code-text: #e2e8f0;
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: "Microsoft JhengHei", "PingFang TC", sans-serif; background: #f5f5f2; color: #2a2a2a; line-height: 1.7; }
-  header { background: #4a4a4a; color: #fff; padding: 22px 20px; }
-  header h1 { margin: 0; font-size: 24px; }
-  header p { margin: 4px 0 0; color: #ddd; font-size: 14px; }
-  main { max-width: 980px; margin: 0 auto; padding: 16px 16px 60px; }
-  section { background: #fff; border-radius: 8px; padding: 18px 20px; margin-top: 18px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
-  h2 { margin: 0 0 10px; font-size: 20px; border-left: 5px solid #d9822b; padding-left: 10px; }
-  h3 { margin: 16px 0 6px; font-size: 16px; }
-  table { border-collapse: collapse; width: 100%; font-size: 14px; }
-  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; vertical-align: top; }
-  th { background: #f0eee8; }
-  .scroll { overflow-x: auto; }
-  svg { width: 100%; height: auto; display: block; background: #fafaf7; border: 1px solid #e3e1da; border-radius: 6px; }
-  .note { background: #fff7e6; border: 1px solid #f0d9a8; border-radius: 6px; padding: 8px 12px; font-size: 14px; }
-  .tag { display: inline-block; background: #d9822b; color: #fff; border-radius: 10px; padding: 0 8px; font-size: 12px; margin-right: 4px; }
-  code { background: #eee; padding: 1px 5px; border-radius: 3px; }
-  ol li, ul li { margin: 3px 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: "Noto Sans TC", "Microsoft JhengHei", "PingFang TC", sans-serif;
+    font-size: 17px;
+    line-height: 1.8;
+    color: var(--text);
+    background: var(--bg);
+  }
+  a { color: var(--primary); }
+  :focus-visible { outline: 3px solid #f59e0b; outline-offset: 2px; border-radius: 4px; }
+  .skip { position: absolute; left: -9999px; }
+  .skip:focus { left: 16px; top: 8px; background: #fff; padding: 6px 12px; z-index: 10; }
 
-  nav.toc { position: sticky; top: 0; z-index: 20; background: #fff; border-bottom: 1px solid #ddd; padding: 8px 16px; display: flex; gap: 4px 16px; flex-wrap: wrap; font-size: 14px; }
-  nav.toc a { color: #2f6fb0; text-decoration: none; }
+  header.hero {
+    background: linear-gradient(135deg, #1e3a8a 0%, #0f766e 100%);
+    color: #fff;
+    padding: 48px 20px 40px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+  .hero .wrap { padding: 0; }
+  .hero .eyebrow {
+    display: inline-block; background: rgba(15,23,42,0.4); border: 1px solid rgba(255,255,255,0.35);
+    padding: 2px 12px; border-radius: 999px; font-size: 0.9rem; font-weight: 700;
+  }
+  .hero h1 { font-size: clamp(1.8rem, 4vw, 2.6rem); line-height: 1.3; margin: 14px 0 10px; font-weight: 900; }
+  .hero p { font-size: 1.1rem; max-width: 760px; margin: 0 0 20px; color: #f0f9ff; }
+  .hero .actions { display: flex; flex-wrap: wrap; gap: 12px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; border-radius: 10px;
+    font-weight: 700; text-decoration: none; border: 2px solid transparent; font-size: 1rem; cursor: pointer;
+    font-family: inherit;
+  }
+  .btn-primary { background: #fde047; color: #0f172a; }
+  .btn-primary:hover { background: #facc15; }
+  .btn-ghost { color: #fff; border-color: rgba(255,255,255,0.7); background: transparent; }
+  .btn-ghost:hover { background: rgba(255,255,255,0.12); }
+  .facts { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; padding: 0; list-style: none; }
+  .facts li { background: rgba(15,23,42,0.35); border-radius: 8px; padding: 4px 12px; font-size: 0.95rem; margin: 0; }
+
+  .layout { display: grid; grid-template-columns: 240px 1fr; gap: 32px; padding-top: 28px; padding-bottom: 60px; }
+  nav.toc { position: sticky; top: 16px; align-self: start; max-height: calc(100vh - 32px); overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  nav.toc h2 { font-size: 1rem; margin: 0 0 6px; }
+  nav.toc ol { margin: 0; padding-left: 1.6em; font-size: 0.95rem; line-height: 1.9; }
+  nav.toc a { text-decoration: none; }
   nav.toc a:hover { text-decoration: underline; }
-  button { font: inherit; font-size: 14px; padding: 5px 12px; border: 1px solid #aaa; border-radius: 5px; background: #fff; cursor: pointer; }
-  button:hover { background: #f0eee8; }
-  button.primary { background: #d9822b; border-color: #d9822b; color: #fff; }
-  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; font-size: 14px; }
-  .toolbar .sep { flex: 1; }
-  label.inline { display: inline-block; margin-right: 10px; font-size: 14px; }
-  label.slider { display: block; font-size: 14px; margin: 6px 0; }
-  label.slider input { display: block; width: 100%; }
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-  @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
-  .panel { border: 1px solid #e3e1da; border-radius: 6px; padding: 8px 14px; background: #fcfcfa; }
-  .panel h4, .simwrap h4 { margin: 8px 0; font-size: 15px; }
-  table.mini th { width: 46%; background: #f6f4ee; font-weight: normal; }
-  .small { font-size: 13px; color: #666; }
-  .led { display: inline-block; border-radius: 50%; width: 26px; height: 26px; line-height: 26px; text-align: center; font-size: 12px; background: #ccc; color: #fff; }
-  .led.onR { background: #e33; box-shadow: 0 0 8px #e33; }
-  .led.onG { background: #2a2; box-shadow: 0 0 8px #2a2; }
-  .buzz { display: inline-block; font-size: 13px; color: #bbb; }
-  .buzz.on { color: #d9822b; font-weight: bold; }
-  pre.code { background: #23272e; color: #e6e6e6; padding: 12px; border-radius: 0 0 6px 6px; overflow: auto; font-size: 13px; line-height: 1.5; margin: 0 0 12px; }
-  .codehead { display: flex; justify-content: space-between; align-items: center; background: #3a3f48; color: #fff; padding: 4px 10px; border-radius: 6px 6px 0 0; font-size: 13px; margin-top: 10px; }
-  .codehead button { padding: 2px 10px; font-size: 12px; }
-  .stage { border: 1px solid #e3e1da; border-radius: 8px; padding: 6px 16px 14px; margin-top: 18px; background: #fffdf8; }
-  .stage h3 { font-size: 18px; color: #b8651a; border-bottom: 2px solid #f0d9a8; padding-bottom: 4px; }
-  .stage h4 { margin: 14px 0 4px; font-size: 15px; }
+  main { min-width: 0; }
+
+  section { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 24px 28px; margin-bottom: 24px; scroll-margin-top: 16px; }
+  section > h2 { font-size: 1.5rem; margin: 0 0 12px; display: flex; align-items: center; gap: 10px; }
+  .num { display: inline-flex; width: 36px; height: 36px; border-radius: 9px; background: var(--primary-soft); color: var(--primary); align-items: center; justify-content: center; font-size: 1rem; font-weight: 900; flex-shrink: 0; }
+  h3 { font-size: 1.15rem; margin: 20px 0 6px; }
+  h4 { font-size: 1rem; margin: 14px 0 4px; }
+  p { margin: 8px 0; }
+  ul, ol { padding-left: 1.4em; margin: 8px 0; }
+  li { margin: 3px 0; }
+  .muted, .small { color: var(--muted); }
+  .small { font-size: 0.9rem; }
+
+  .table-wrap { overflow-x: auto; margin: 10px 0; }
+  table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 0.97rem; }
+  table.mini { min-width: 0; }
+  th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+  thead th, tr:first-child > th { background: #e2e8f0; }
+  tbody th { background: #f1f5f9; font-weight: 700; }
+  table.mini th { background: #f1f5f9; font-weight: 700; width: 46%; }
+
+  .note { border-radius: 10px; padding: 12px 16px; margin: 12px 0; border: 1px solid; }
+  .note > strong:first-child { display: block; }
+  .note.warn { background: var(--danger-soft); border-color: #fca5a5; color: #7f1d1d; }
+  .note.tip { background: var(--ok-soft); border-color: #6ee7b7; color: #064e3b; }
+  .note.info { background: var(--accent-soft); border-color: #fde047; color: #713f12; }
+  .tag { display: inline-block; background: var(--accent); color: #fff; border-radius: 999px; padding: 0 10px; font-size: 0.85rem; font-weight: 700; margin-right: 6px; }
+
+  .flow { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; counter-reset: flow; }
+  .flow li { counter-increment: flow; background: var(--primary-soft); border: 1px solid #7dd3fc; border-radius: 10px; padding: 8px 12px; flex: 1 1 150px; font-size: 0.95rem; position: relative; margin: 0; }
+  .flow li::before { content: counter(flow); display: inline-block; background: var(--primary); color: #fff; width: 22px; height: 22px; border-radius: 50%; text-align: center; line-height: 22px; font-size: 0.8rem; font-weight: 700; margin-right: 6px; }
+  .flow li b { display: block; }
+
+  .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .box { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; background: #f8fafc; }
+  .box h3 { margin-top: 0; }
+  .panel { border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; background: #f8fafc; }
+  .panel h4 { margin: 8px 0; }
+
+  pre, code { font-family: "JetBrains Mono", Consolas, monospace; }
+  code { background: #e2e8f0; padding: 1px 5px; border-radius: 4px; font-size: 0.92em; }
+  pre { background: var(--code-bg); color: var(--code-text); padding: 14px 16px; border-radius: 10px; overflow-x: auto; font-size: 0.9rem; line-height: 1.6; margin: 8px 0; }
+  pre code { background: none; padding: 0; color: inherit; }
+  pre.code { border-radius: 0 0 10px 10px; margin: 0 0 12px; }
+  .codehead { display: flex; justify-content: space-between; align-items: center; background: #334155; color: #fff; padding: 4px 12px; border-radius: 10px 10px 0 0; font-size: 0.9rem; margin-top: 10px; }
+
+  .prompt { border: 1px solid var(--border); border-radius: 10px; margin: 12px 0; overflow: hidden; }
+  .prompt-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; background: #f1f5f9; padding: 8px 12px; font-weight: 700; flex-wrap: wrap; }
+  .prompt pre { margin: 0; border-radius: 0; white-space: pre-wrap; }
+  .copy { background: var(--primary); color: #fff; border: none; border-radius: 8px; padding: 4px 12px; font-weight: 700; cursor: pointer; font-family: inherit; font-size: 0.9rem; }
+  .copy:hover { background: #075985; }
+
+  .check { list-style: none; padding-left: 0; }
+  .check li::before { content: "☐ "; font-weight: 700; color: var(--primary); }
   ul.checks { list-style: none; padding-left: 4px; }
-  details.hint { border: 1px solid #f0d9a8; background: #fff7e6; border-radius: 6px; padding: 4px 10px; margin: 6px 0; font-size: 14px; }
-  details.hint summary { cursor: pointer; font-weight: bold; }
-  .aibox { background: #eef5fb; border: 1px solid #cfe3f5; border-radius: 6px; padding: 8px 12px; margin: 6px 0; font-size: 14px; }
+
+  footer { text-align: center; color: var(--muted); padding: 24px 16px 40px; font-size: 0.95rem; }
+
+  details { margin: 8px 0 16px; }
+  details summary { cursor: pointer; font-weight: 700; color: var(--primary); padding: 4px 0; }
+  details.hint { border: 1px solid #fde047; background: var(--accent-soft); border-radius: 10px; padding: 4px 12px; margin: 6px 0; font-size: 0.97rem; color: #713f12; }
+  details.hint summary { color: #713f12; }
+  .aibox { background: var(--primary-soft); border: 1px solid #7dd3fc; border-radius: 10px; padding: 8px 14px; margin: 6px 0; font-size: 0.97rem; }
   .aibox p { margin: 0 0 6px; }
-  input.keeptxt { width: 80px; font: inherit; font-size: 13px; padding: 2px 4px; }
-  input.keeptxt.wide { width: 100%; min-width: 180px; }
-  canvas { width: 100%; height: auto; display: block; border: 1px solid #e3e1da; border-radius: 6px; background: #fff; }
-  @media (max-width: 720px) { section table, .stage table { display: block; overflow-x: auto; } }
+
+  .formula { font-family: "JetBrains Mono", Consolas, monospace; background: var(--primary-soft); border: 1px solid #7dd3fc; border-radius: 10px; padding: 10px 14px; margin: 10px 0; font-size: 1.05rem; overflow-x: auto; }
+  .calc { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin: 14px 0; background: #f8fafc; }
+  .calc h3 { margin-top: 0; }
+  .calc-grid { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+  .calc label { display: flex; flex-direction: column; font-weight: 700; font-size: 0.95rem; }
+  .calc input { font: inherit; width: 130px; padding: 6px 8px; border: 1px solid #94a3b8; border-radius: 8px; background: #fff; color: var(--text); }
+  .calc-out { margin-top: 10px; padding: 8px 12px; border-radius: 8px; font-weight: 700; border: 1px solid var(--border); background: #fff; }
+  .calc-out.lv0 { border-color: #6ee7b7; background: var(--ok-soft); color: #064e3b; }
+  .calc-out.lv1 { border-color: #fde047; background: var(--accent-soft); color: #713f12; }
+  .calc-out.lv2 { border-color: #fca5a5; background: var(--danger-soft); color: #7f1d1d; }
+
+  /* 圖與動畫 */
+  svg { width: 100%; height: auto; display: block; background: #fafaf7; border: 1px solid var(--border); border-radius: 10px; margin: 6px 0; }
+  canvas { width: 100%; height: auto; display: block; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
+  button { font: inherit; font-size: 0.95rem; padding: 5px 14px; border: 1px solid #94a3b8; border-radius: 8px; background: #fff; cursor: pointer; color: var(--text); }
+  button:hover { background: #f1f5f9; }
+  button.primary { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 700; }
+  button.primary:hover { background: #075985; }
+  .copy, .codehead button { border: none; }
+  .codehead button { background: var(--primary); color: #fff; padding: 2px 12px; font-size: 0.85rem; font-weight: 700; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; font-size: 0.95rem; }
+  .toolbar .sep { flex: 1; }
+  label.inline { display: inline-block; margin-right: 10px; font-size: 0.95rem; }
+  label.slider { display: block; font-size: 0.95rem; margin: 6px 0; }
+  label.slider input { display: block; width: 100%; }
+  .led { display: inline-block; border-radius: 50%; width: 26px; height: 26px; line-height: 26px; text-align: center; font-size: 12px; background: #cbd5e1; color: #fff; }
+  .led.onR { background: #e33; box-shadow: 0 0 8px #e33; }
+  .led.onG { background: #16a34a; box-shadow: 0 0 8px #16a34a; }
+  .buzz { display: inline-block; font-size: 0.9rem; color: #94a3b8; }
+  .buzz.on { color: var(--accent); font-weight: 700; }
+  .stage { border: 1px solid var(--border); border-radius: 12px; padding: 6px 18px 14px; margin-top: 18px; background: #fcfdff; }
+  .stage h3 { font-size: 1.2rem; color: var(--primary); border-bottom: 2px solid var(--primary-soft); padding-bottom: 4px; }
+  input.keeptxt { width: 80px; font: inherit; font-size: 0.9rem; padding: 2px 6px; border: 1px solid #94a3b8; border-radius: 6px; }
+  input.keeptxt.wide { width: 100%; min-width: 200px; }
+
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; }
+    nav.toc { position: static; max-height: none; }
+    .grid2 { grid-template-columns: 1fr; }
+    section { padding: 20px 16px; }
+    body { font-size: 16px; }
+  }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  @media print {
+    nav.toc, .hero .actions, .copy, .calc, .toolbar { display: none; }
+    .layout { display: block; }
+    section { break-inside: avoid; }
+  }
+
 </style>
 </head>
 <body>
-<header>
-  <h1>AI 避障搜尋自走車　第一版（V1）規劃</h1>
-  <p>含動畫模擬與實作手冊　｜　目標：車子能自己行走、避開障礙物，並用鏡頭找到指定目標物後靠近停下</p>
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="eyebrow">專題製作・學生實作手冊</span>
+    <h1>AI 避障搜尋自走車：<br>讓小車自己避開障礙，找到目標物</h1>
+    <p>讓一台小車自己行走、避開障礙物，並用鏡頭找到指定的目標物後靠近停下。Arduino 負責馬達與超音波，樹莓派負責鏡頭辨識與決策。附動畫模擬、分階段實作手冊，以及每個階段給學生的提示語。</p>
+    <div class="actions">
+      <a class="btn btn-primary" href="#logic">▶ 看動畫模擬</a>
+      <a class="btn btn-ghost" href="#design">看功能設計</a>
+      <a class="btn btn-ghost" href="#manual">看實作手冊</a>
+      <a class="btn btn-ghost" href="https://github.com/fbkstj/cr6/tree/main/arduino" target="_blank" rel="noopener">程式碼（GitHub）</a>
+    </div>
+    <ul class="facts">
+      <li>難度：入門～進階 ★★☆</li>
+      <li>建議人數：2～3 人</li>
+      <li>時程：約 8 週（建議）</li>
+      <li>核心技術：Arduino ＋ 超音波 ＋ OpenCV 顏色辨識 ＋ 狀態機</li>
+      <li>預算：約 4,300～6,000 元</li>
+    </ul>
+  </div>
 </header>
-<nav class="toc">
-  <a href="#s1">功能需求</a><a href="#s2">外觀圖</a><a href="#s3">方塊圖</a><a href="#s4">零件</a><a href="#s5">接線</a><a href="#s6">安裝</a><a href="#s7">流程</a>
-  <a href="#s8"><b>動畫模擬</b></a><a href="#s9"><b>實作手冊</b></a><a href="#s10">總驗收</a>
-</nav>
-<main>
 
-<section id="s1">
-  <h2>一、第一版功能需求</h2>
-  <table>
-    <tr><th style="width:56px">編號</th><th>功能</th><th>驗收標準</th></tr>
-    <tr><td>F1</td><td>手動測試模式</td><td>用電腦鍵盤可以控制前進、後退、左轉、右轉、停止</td></tr>
-    <tr><td>F2</td><td>超音波避障</td><td>前方 20 公分內有障礙物時自動停下，並轉向避開；連續測試 10 次至少 8 次成功</td></tr>
-    <tr><td>F3</td><td>鏡頭辨識目標物</td><td>在畫面上框出目標物，並顯示它在畫面的左、中、右位置</td></tr>
-    <tr><td>F4</td><td>搜尋目標</td><td>沒看到目標時，原地慢慢旋轉搜尋；旋轉一圈沒找到就前進一段距離再繼續找</td></tr>
-    <tr><td>F5</td><td>接近目標</td><td>看到目標後，依目標位置修正方向往前走，距離約 15 公分時停下</td></tr>
-    <tr><td>F6</td><td>安全機制</td><td>避障優先於接近目標；有實體電源開關；失去鏡頭或通訊 1 秒以上自動停車</td></tr>
-    <tr><td>F7</td><td>狀態提示</td><td>LED 與蜂鳴器顯示目前狀態（搜尋、接近、避障、到達）</td></tr>
-  </table>
-  <h3>第一版不做的事（留給 V2）</h3>
-  <ul>
-    <li>光達建圖與路徑規劃</li>
-    <li>多種目標物同時辨識</li>
-    <li>室外或不平整地面行走</li>
-  </ul>
-  <div class="note"><span class="tag">建議</span>V1 的目標物先用「單一顏色的物體」（例如紅色方塊），用 OpenCV 顏色辨識，學生容易理解。要換成 AI 辨識時，把這一步換成 YOLO 即可，其他部分不用改。</div>
-</section>
+<div class="wrap layout">
+  <nav class="toc" aria-label="本頁目錄">
+    <h2>目錄</h2>
+    <ol>
+      <li><a href="#overview">專題概要</a></li>
+      <li><a href="#layout">配置與架構</a></li>
+      <li><a href="#design">功能設計</a></li>
+      <li><a href="#hardware">硬體清單</a></li>
+      <li><a href="#wiring">接線與組裝</a></li>
+      <li><a href="#software">軟體與安裝</a></li>
+      <li><a href="#field">場地與測試場景</a></li>
+      <li><a href="#manual">實作手冊（階段 0～8）</a></li>
+      <li><a href="#logic">運作原理與動畫模擬</a></li>
+      <li><a href="#code">程式使用說明</a></li>
+      <li><a href="#prompts">AI 助手提示語</a></li>
+      <li><a href="#verify">測試與驗證</a></li>
+      <li><a href="#safety">安全與注意事項</a></li>
+      <li><a href="#faq">常見問題</a></li>
+      <li><a href="#v2">延伸：第二版（選做）</a></li>
+      <li><a href="#report">書面報告與評分</a></li>
+    </ol>
+  </nav>
 
-<section id="s2">
-  <h2>二、外觀示意圖</h2>
+  <main id="main">
+
+    <section id="overview">
+      <h2><span class="num">1</span>專題概要</h2>
+      <h3>定位</h3>
+      <p>市面上的自走車多半只會循線或遙控，很少有「看到指定物品就自己過去」的功能。這個專題用一台雙輪小車，結合<strong>超音波避障</strong>與<strong>鏡頭辨識</strong>。重點不是做出能量產的產品，而是弄懂「感測、決策、控制」三層怎麼分工，並用測試數據證明方法有效。</p>
+      <h3>專題目標</h3>
+      <ol>
+        <li>用 3 顆超音波量測前方、左前、右前的距離，遇到障礙物自動停下、後退、轉向。</li>
+        <li>用鏡頭辨識單一顏色的目標物，算出它在畫面的左右位置與大約的距離。</li>
+        <li>沒看到目標時原地旋轉搜尋；看到後靠近，在約 15 公分處停下。</li>
+        <li>有安全機制：實體電源開關、通訊中斷自動停車、前進時前方太近硬體直接停。</li>
+        <li>用紅綠燈與蜂鳴器顯示目前狀態（避障中、看到目標、到達）。</li>
+        <li>用固定場景連續測試 10 次，記錄成功率與失敗原因，並調整參數比較前後差異。</li>
+      </ol>
+      <div class="note warn">
+        <strong>安全規則</strong>
+        第一次上電、調馬達方向時，一定要<strong>把車子架空</strong>。18650 鋰電池要用專用充電器，不可短路、不可過度放電。測試場地要避開人群、樓梯口與桌邊。
+      </div>
+    </section>
+
+    <section id="layout">
+      <h2><span class="num">2</span>配置與架構</h2>
+
   <h3>1. 俯視圖（從上往下看，車頭在上方）</h3>
   <svg viewBox="0 0 960 540" role="img" aria-label="自走車俯視圖">
     <!-- 車身 -->
@@ -210,10 +369,62 @@
     <text x="830" y="195" font-size="13" fill="#7a7466">下層：電池與驅動</text>
   </svg>
   <div class="note"><span class="tag">重點</span>用雙層板的好處是：電池放下層，重心低、車子比較穩；樹莓派和 Arduino 放上層，方便接線和除錯。電池和行動電源是兩個獨立電源，可以避免馬達啟動時的電壓下降讓樹莓派重新開機。</div>
-</section>
 
-<section id="s3">
-  <h2>三、系統方塊圖</h2>
+      <h3>分兩個階段做</h3>
+      <div class="grid2">
+        <div class="box">
+          <h3>第一階段：只用超音波</h3>
+          <p>手冊階段 2～5。馬達、超音波、序列通訊、避障。<strong>不需要鏡頭</strong>，最容易成功，做完就有一台能避障的車。</p>
+        </div>
+        <div class="box">
+          <h3>第二階段：加上鏡頭</h3>
+          <p>手冊階段 6～7。顏色辨識、搜尋、接近、到達。把辨識結果接到第一階段的避障程式上。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="design">
+      <h2><span class="num">3</span>功能設計</h2>
+
+      <h3>3.1 功能清單與驗收標準</h3>
+
+  <table>
+    <tr><th style="width:56px">編號</th><th>功能</th><th>驗收標準</th></tr>
+    <tr><td>F1</td><td>手動測試模式</td><td>用電腦鍵盤可以控制前進、後退、左轉、右轉、停止</td></tr>
+    <tr><td>F2</td><td>超音波避障</td><td>前方 20 公分內有障礙物時自動停下，並轉向避開；連續測試 10 次至少 8 次成功</td></tr>
+    <tr><td>F3</td><td>鏡頭辨識目標物</td><td>在畫面上框出目標物，並顯示它在畫面的左、中、右位置</td></tr>
+    <tr><td>F4</td><td>搜尋目標</td><td>沒看到目標時，原地慢慢旋轉搜尋；旋轉一圈沒找到就前進一段距離再繼續找</td></tr>
+    <tr><td>F5</td><td>接近目標</td><td>看到目標後，依目標位置修正方向往前走，距離約 15 公分時停下</td></tr>
+    <tr><td>F6</td><td>安全機制</td><td>避障優先於接近目標；有實體電源開關；失去鏡頭或通訊 1 秒以上自動停車</td></tr>
+    <tr><td>F7</td><td>狀態提示</td><td>LED 與蜂鳴器顯示目前狀態（搜尋、接近、避障、到達）</td></tr>
+  </table>
+  <h3>第一版不做的事（留給 V2）</h3>
+  <ul>
+    <li>光達建圖與路徑規劃</li>
+    <li>多種目標物同時辨識</li>
+    <li>室外或不平整地面行走</li>
+  </ul>
+  <div class="note"><span class="tag">建議</span>V1 的目標物先用「單一顏色的物體」（例如紅色方塊），用 OpenCV 顏色辨識，學生容易理解。要換成 AI 辨識時，把這一步換成 YOLO 即可，其他部分不用改。</div>
+
+
+      <h3>3.2 非功能需求（設計目標）</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>項目</th><th>設計目標</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">安全</th><td>斷開開關即斷電；通訊中斷 1 秒內自動停車；前進時前方小於 12 公分，Arduino 不等樹莓派指令直接停車</td></tr>
+            <tr><th scope="row">感測更新</th><td>超音波每 100 毫秒更新一次</td></tr>
+            <tr><th scope="row">辨識速度</th><td>樹莓派上每秒至少處理 5 張影像（目標，需實測）</td></tr>
+            <tr><th scope="row">成本</th><td>整車不超過 NT$6,000（不含電腦）</td></tr>
+            <tr><th scope="row">可維護</th><td>Arduino 與樹莓派分開，各自可以單獨測試；所有參數寫在程式最上面的常數</td></tr>
+            <tr><th scope="row">可重現</th><td>每個階段都有驗收項目，測試場景固定，紀錄可比較</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="small">這些是設計目標，不是已經量測過的數據。實際數值要用你的車測量後寫進報告。</p>
+
+      <h3>3.3 系統模組圖</h3>
+
   <svg viewBox="0 0 960 330" role="img" aria-label="系統方塊圖">
     <defs><marker id="ar" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0 L10 4 L0 8 Z" fill="#555"/></marker></defs>
     <g stroke="#555" stroke-width="2" fill="none" marker-end="url(#ar)">
@@ -241,10 +452,114 @@
       <text x="30" y="290">電源：18650（7.4V）→ L298N → 馬達　｜　行動電源（5V）→ Raspberry Pi → USB → Arduino　｜　所有 GND 要共地</text>
     </g>
   </svg>
-</section>
 
-<section id="s4">
-  <h2>四、零件清單與參考價格</h2>
+
+      <h3>3.4 行為狀態機</h3>
+
+  <svg viewBox="0 0 960 320" role="img" aria-label="行為流程">
+    <defs><marker id="ar2" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0 L10 4 L0 8 Z" fill="#555"/></marker></defs>
+    <g stroke="#555" stroke-width="2" fill="none" marker-end="url(#ar2)">
+      <line x1="200" y1="90" x2="340" y2="90"/>
+      <line x1="560" y1="90" x2="700" y2="90"/>
+      <line x1="450" y1="125" x2="450" y2="195" stroke-dasharray="5 4"/>
+      <line x1="130" y1="125" x2="130" y2="125" stroke="none"/>
+      <path d="M340 245 L130 245 L130 128"/>
+      <path d="M340 90 L340 90" stroke="none"/>
+    </g>
+    <g font-size="15" text-anchor="middle" fill="#fff">
+      <rect x="60" y="55" width="140" height="70" rx="8" fill="#2f6fb0"/><text x="130" y="95">搜尋</text>
+      <rect x="340" y="55" width="220" height="70" rx="8" fill="#2e8b57"/><text x="450" y="95">接近目標</text>
+      <rect x="700" y="55" width="180" height="70" rx="8" fill="#d9822b"/><text x="790" y="95">到達停止</text>
+      <rect x="340" y="200" width="220" height="90" rx="8" fill="#b02a2a"/><text x="450" y="238">避障</text><text x="450" y="262" font-size="13">停止 → 後退 → 轉向</text>
+    </g>
+    <g font-size="13" fill="#555">
+      <text x="270" y="78" text-anchor="middle">看到目標</text>
+      <text x="630" y="78" text-anchor="middle">距離約 15 公分</text>
+      <text x="462" y="166">前方小於 20 公分</text>
+      <text x="146" y="150">搜尋方式：原地旋轉</text>
+      <text x="146" y="170">一圈沒找到→前進一段再轉</text>
+      <text x="146" y="270">避障完成，</text>
+      <text x="146" y="290">回到「搜尋」</text>
+    </g>
+  </svg>
+  <div class="note"><span class="tag">原則</span>不管現在是哪個狀態，只要超音波偵測到前方太近，一律先進入避障。避障的優先權比找目標高。</div>
+
+
+      <h3>3.5 介面規格</h3>
+      <h4>序列通訊（樹莓派 ↔ Arduino，USB，115200 bps）</h4>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>方向</th><th>內容</th><th>說明</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">樹莓派 → Arduino</th><td><code>F</code> <code>B</code> <code>L</code> <code>R</code> <code>S</code></td><td>前進、後退、左轉、右轉、停止（單一字元）</td></tr>
+            <tr><th scope="row"></th><td><code>+</code> <code>-</code></td><td>速度加減（PWM 80～255，每次 20）</td></tr>
+            <tr><th scope="row"></th><td><code>1</code> <code>2</code> <code>3</code> <code>4</code> <code>5</code></td><td>紅燈亮、紅燈滅、綠燈亮、綠燈滅、蜂鳴器響一聲</td></tr>
+            <tr><th scope="row">Arduino → 樹莓派</th><td><code>D,左,中,右</code>＋換行</td><td>三顆超音波距離（公分，整數），每 100 毫秒一筆。400 代表沒收到回波</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h4>Python 函式（<code>raspberry-pi/</code>）</h4>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>函式</th><th>回傳／作用</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><code>Car.send(cmd)</code></th><td>送出單一字元指令</td></tr>
+            <tr><th scope="row"><code>Car.update()</code></th><td>讀取序列埠，回傳最新的 (左, 中, 右) 距離</td></tr>
+            <tr><th scope="row"><code>Car.stop()</code></th><td>停車</td></tr>
+            <tr><th scope="row"><code>find_target(frame)</code></th><td>(找到嗎, 偏移量 -1～+1, 框寬度 px, 框)，階段 6</td></tr>
+            <tr><th scope="row"><code>distance_cm(width_px)</code></th><td>用框寬度估計距離（公分），階段 6</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>3.6 燈號與聲音設計</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>元件</th><th>狀態</th><th>意義</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">紅色 LED</th><td>亮</td><td>避障中</td></tr>
+            <tr><th scope="row">綠色 LED</th><td>亮</td><td>鏡頭看到目標物（或已到達）</td></tr>
+            <tr><th scope="row">蜂鳴器</th><td>響一聲</td><td>到達目標</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>3.7 例外處理</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>狀況</th><th>處理方式</th><th>由誰處理</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">樹莓派當機、USB 線脫落</th><td>超過 1 秒沒收到指令，馬達停止</td><td>Arduino 韌體</td></tr>
+            <tr><th scope="row">前進時前方小於 12 公分</th><td>馬達直接停止</td><td>Arduino 韌體</td></tr>
+            <tr><th scope="row">超音波沒收到回波</th><td>讀數當作 400（很遠）</td><td>Arduino 韌體</td></tr>
+            <tr><th scope="row">序列埠收到壞資料</th><td>略過這一筆，沿用上一筆距離</td><td><code>car.py</code></td></tr>
+            <tr><th scope="row">鏡頭失效、讀不到畫面</th><td>停車並結束程式</td><td><code>main.py</code></td></tr>
+            <tr><th scope="row">目標被擋住、看不到</th><td>回到「搜尋」狀態</td><td><code>main.py</code></td></tr>
+            <tr><th scope="row">想立刻停車</th><td>按 Ctrl+C，或直接關電源開關</td><td>使用者</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>3.8 功能測試對照</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>功能</th><th>測試方法</th><th>對應階段</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">F1 手動測試</th><td>執行 <code>teleop.py</code>，輸入 F/B/L/R/S，確認動作正確</td><td>階段 2、4</td></tr>
+            <tr><th scope="row">F2 避障</th><td>在紙箱前執行 <code>avoid.py</code>，10 次至少 8 次不碰撞</td><td>階段 5</td></tr>
+            <tr><th scope="row">F3 辨識</th><td>目標放在左、中、右，看 offset 的正負與大小</td><td>階段 6</td></tr>
+            <tr><th scope="row">F4 搜尋</th><td>目標放在車子後方，看車子會不會旋轉找到</td><td>階段 7</td></tr>
+            <tr><th scope="row">F5 接近</th><td>目標在 1.5 公尺外，量車子停下時的距離</td><td>階段 7</td></tr>
+            <tr><th scope="row">F6 安全</th><td>送 F 後不再送指令（1 秒停）；手擋在前方（12 公分停）；拔掉鏡頭</td><td>階段 4、7</td></tr>
+            <tr><th scope="row">F7 提示</th><td>避障時紅燈亮、看到目標綠燈亮、到達蜂鳴器響</td><td>階段 4、7</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="hardware">
+      <h2><span class="num">4</span>硬體清單</h2>
+
   <div class="scroll">
   <table>
     <tr><th>圖號</th><th>零件</th><th>數量</th><th>規格建議</th><th>參考價（台幣）</th></tr>
@@ -266,10 +581,12 @@
   </table>
   </div>
   <div class="note" style="margin-top:10px"><span class="tag">提醒</span>價格只是參考，實際請以購買時的價格為準。學校如果已經有樹莓派、Arduino、電池，可以省下一半以上的預算。</div>
-</section>
 
-<section id="s5">
-  <h2>五、接線對照表</h2>
+    </section>
+
+    <section id="wiring">
+      <h2><span class="num">5</span>接線與組裝</h2>
+
   <h3>1. Arduino ↔ L298N 馬達驅動</h3>
   <div class="scroll"><table>
     <tr><th>Arduino 腳位</th><th>L298N 腳位</th><th>功能</th></tr>
@@ -305,10 +622,9 @@
     <tr><td>Raspberry Pi USB</td><td>USB 鏡頭</td><td>影像輸入</td></tr>
   </table></div>
   <div class="note"><span class="tag">注意</span>HC-SR04 的 ECHO 輸出是 5V，接 Arduino（5V 邏輯）沒問題；但如果之後改接樹莓派的 GPIO（3.3V），要加分壓電阻，否則會損壞樹莓派。這也是這一版把感測器接在 Arduino 上的原因。</div>
-</section>
 
-<section id="s6">
-  <h2>六、安裝步驟（給學生）</h2>
+      <h3>組裝步驟</h3>
+
   <ol>
     <li><strong>組裝底盤：</strong>裝好馬達、輪子、萬向輪，把雙層板鎖好。</li>
     <li><strong>固定電源：</strong>電池盒和行動電源放下層，用束線帶綁牢。</li>
@@ -325,44 +641,138 @@
     <li>所有 GND 都有連在一起。</li>
     <li>電池正負極沒有接反，開關可以切斷電源。</li>
   </ul>
-</section>
 
-<section id="s7">
-  <h2>七、行為流程（狀態機）</h2>
-  <svg viewBox="0 0 960 320" role="img" aria-label="行為流程">
-    <defs><marker id="ar2" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0 L10 4 L0 8 Z" fill="#555"/></marker></defs>
-    <g stroke="#555" stroke-width="2" fill="none" marker-end="url(#ar2)">
-      <line x1="200" y1="90" x2="340" y2="90"/>
-      <line x1="560" y1="90" x2="700" y2="90"/>
-      <line x1="450" y1="125" x2="450" y2="195" stroke-dasharray="5 4"/>
-      <line x1="130" y1="125" x2="130" y2="125" stroke="none"/>
-      <path d="M340 245 L130 245 L130 128"/>
-      <path d="M340 90 L340 90" stroke="none"/>
-    </g>
-    <g font-size="15" text-anchor="middle" fill="#fff">
-      <rect x="60" y="55" width="140" height="70" rx="8" fill="#2f6fb0"/><text x="130" y="95">搜尋</text>
-      <rect x="340" y="55" width="220" height="70" rx="8" fill="#2e8b57"/><text x="450" y="95">接近目標</text>
-      <rect x="700" y="55" width="180" height="70" rx="8" fill="#d9822b"/><text x="790" y="95">到達停止</text>
-      <rect x="340" y="200" width="220" height="90" rx="8" fill="#b02a2a"/><text x="450" y="238">避障</text><text x="450" y="262" font-size="13">停止 → 後退 → 轉向</text>
-    </g>
-    <g font-size="13" fill="#555">
-      <text x="270" y="78" text-anchor="middle">看到目標</text>
-      <text x="630" y="78" text-anchor="middle">距離約 15 公分</text>
-      <text x="462" y="166">前方小於 20 公分</text>
-      <text x="146" y="150">搜尋方式：原地旋轉</text>
-      <text x="146" y="170">一圈沒找到→前進一段再轉</text>
-      <text x="146" y="270">避障完成，</text>
-      <text x="146" y="290">回到「搜尋」</text>
-    </g>
-  </svg>
-  <div class="note"><span class="tag">原則</span>不管現在是哪個狀態，只要超音波偵測到前方太近，一律先進入避障。避障的優先權比找目標高。</div>
-</section>
+    </section>
 
-<section id="s8">
-  <h2>八、動畫模擬</h2>
-  <p>在動手做車子之前，先在這裡玩玩看：車子會依照第七節的狀態機自己搜尋、避障、接近目標。你可以改參數、放障礙物、移動目標，觀察車子的反應。這個模擬使用的判斷邏輯，和手冊階段 7 的 <code>main.py</code> 是同一套。</p>
+    <section id="software">
+      <h2><span class="num">6</span>軟體與安裝</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>項目</th><th>安裝在</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Raspberry Pi OS</th><td>樹莓派（microSD）</td><td>執行 Python、鏡頭辨識</td></tr>
+            <tr><th scope="row">Arduino IDE</th><td>你的電腦</td><td>編寫並上傳 Arduino 程式</td></tr>
+            <tr><th scope="row">python3-opencv、python3-serial、python3-numpy</th><td>樹莓派</td><td>影像處理、序列通訊</td></tr>
+            <tr><th scope="row">VNC 或 SSH</th><td>電腦連樹莓派</td><td>遠端操作；要看鏡頭畫面請用 VNC 或接螢幕</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>樹莓派安裝指令：</p>
+      <pre><code>sudo apt update
+sudo apt install -y python3-opencv python3-serial python3-numpy</code></pre>
+      <p>詳細步驟與驗證方式，請看第 8 章的「階段 0」。</p>
+    </section>
 
-  <h3>1. 整台車的行為模擬</h3>
+    <section id="field">
+      <h2><span class="num">7</span>場地與測試場景</h2>
+      <h3>場地與目標物</h3>
+      <ul>
+        <li><strong>場地：</strong>平坦、不反光的地面，至少 3 公尺 × 2 公尺。用膠帶標出車子起點與目標位置。</li>
+        <li><strong>目標物：</strong>紅色、約 5 公分寬的方塊。顏色要和背景明顯不同。</li>
+        <li><strong>障礙物：</strong>紙箱（高度超過超音波感測器，表面平整）。</li>
+        <li><strong>光線：</strong>固定在同一時段、同一盞燈下測試，避免窗邊的日光忽明忽暗。</li>
+      </ul>
+      <h3>測試場景</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>場景</th><th>設定</th><th>難度</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">A</th><td>空曠，目標在車子正前方 1.5 公尺</td><td>低</td><td>驗證接近與停下</td></tr>
+            <tr><th scope="row">B</th><td>空曠，目標在車子後方</td><td>低</td><td>驗證搜尋</td></tr>
+            <tr><th scope="row">C</th><td>車子與目標之間放 1 個紙箱</td><td>中</td><td>驗證避障後重新找到目標</td></tr>
+            <tr><th scope="row">D</th><td>2～3 個紙箱，目標被部分擋住</td><td>高</td><td>測試 V1 的極限（沒有地圖，成功率通常會明顯下降）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>測試前檢查表</h3>
+      <ul class="check">
+        <li>電池充飽，電池與行動電源都已接好</li>
+        <li>車輪乾淨，地面沒有灰塵或線材</li>
+        <li>目標物、紙箱位置用膠帶標記</li>
+        <li>光線與前次測試相同</li>
+        <li>旁邊有人負責按 Ctrl+C 或關電源開關</li>
+      </ul>
+    </section>
+
+    <section id="manual">
+      <h2><span class="num">8</span>實作手冊（階段 0～8）</h2>
+      <h3>建議進度（8 週）</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>週次</th><th>階段</th><th>產出</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">1</th><td>階段 0、1：環境準備、組裝接線</td><td>工具都能用，硬體完成，通過不上電檢查</td></tr>
+            <tr><th scope="row">2</th><td>階段 2：馬達測試</td><td>四個動作正確</td></tr>
+            <tr><th scope="row">3</th><td>階段 3：超音波測距</td><td>三顆讀數誤差 2 公分內</td></tr>
+            <tr><th scope="row">4</th><td>階段 4：序列通訊與韌體</td><td>能用鍵盤手動開車，安全機制有效</td></tr>
+            <tr><th scope="row">5</th><td>階段 5：避障</td><td>10 次 8 次成功</td></tr>
+            <tr><th scope="row">6</th><td>階段 6：鏡頭辨識</td><td>能框出目標、估算距離</td></tr>
+            <tr><th scope="row">7</th><td>階段 7：整合</td><td>能搜尋、接近、到達</td></tr>
+            <tr><th scope="row">8</th><td>階段 8：測試調校與報告</td><td>10 次測試紀錄、書面報告</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="small">週次只是建議，可依課程節數調整。如果時間不夠，做到階段 5（避障）也是完整的成果。</p>
+
+  <div class="note"><span class="tag">怎麼用</span>
+    一個階段做完、通過「驗收」再進下一個。卡住時先看「提示」：<b>提示 1</b> 只給方向，<b>提示 2</b> 給關鍵觀念，<b>提示 3</b> 才接近答案，請依序打開。「AI 提問範本」可以複製貼給 AI 助手，記得把自己的狀況補在後面，並要求它「先解釋，不要直接給完整程式」。
+  </div>
+  <p><strong>實作進度：</strong><span id="progressText">0 / 0</span>　<progress id="progressBar" value="0" max="1" style="width:200px"></progress></p>
+  <div id="stageList"></div>
+
+    </section>
+
+    <section id="logic">
+      <h2><span class="num">9</span>運作原理與動畫模擬</h2>
+
+      <h3>步驟一：用超音波量距離</h3>
+      <p>超音波感測器發出聲波，碰到物體反彈回來，Arduino 量「聲音來回的時間」，再換算成距離：</p>
+      <div class="formula">距離 ＝ 時間 × 聲速 ÷ 2　（聲速約 0.034 公分／微秒）</div>
+
+  <p>拖曳滑桿改變障礙物的距離，看聲波去、回的時間怎麼變。這就是階段 3 程式裡 <code>t * 0.034 / 2</code> 的由來。</p>
+  <div class="simwrap">
+    <canvas id="sonar" width="800" height="170" aria-label="超音波測距動畫"></canvas>
+    <label class="slider">障礙物距離 <output id="oSd">60</output> 公分<input id="rSd" type="range" min="5" max="200" value="60"></label>
+    <p class="small" id="sonarText"></p>
+  </div>
+
+
+      <h3>步驟二：用鏡頭找目標、估算距離</h3>
+      <p>樹莓派把畫面轉成 HSV 色彩空間，找出紅色區域的最大輪廓，得到它的框。從框可以得到兩個資訊：</p>
+      <ul>
+        <li><strong>偏移量</strong>：框的中心離畫面中心多遠（-1 最左、0 正中、+1 最右），決定車子要往左還是往右轉。</li>
+        <li><strong>距離</strong>：框越大代表目標越近。已知目標真實寬度和校正得到的焦距，就能用相似三角形估算：</li>
+      </ul>
+      <div class="formula">距離 ＝ 真實寬度 × 焦距（像素）÷ 框寬度（像素）</div>
+      <div class="calc" id="calc">
+        <h3>動手算算看</h3>
+        <div class="calc-grid">
+          <label for="kw">目標真實寬度（公分）<input id="kw" type="number" min="0.1" step="0.5" value="5" inputmode="decimal"></label>
+          <label for="fp">焦距（像素）<input id="fp" type="number" min="1" value="600" inputmode="decimal"></label>
+          <label for="pw">畫面中的框寬度（像素）<input id="pw" type="number" min="1" value="100" inputmode="decimal"></label>
+        </div>
+        <div class="calc-out" id="calcOut" role="status" aria-live="polite"></div>
+      </div>
+      <p class="small">焦距要自己校正：把目標放在已知距離（例如 50 公分），量框寬度，再用 焦距 ＝ 框寬度 × 距離 ÷ 真實寬度 算出（手冊階段 6）。</p>
+
+      <h3>步驟三：決定要做什麼</h3>
+      <p>每一輪迴圈依<strong>固定順序</strong>判斷（順序很重要，請對照 3.4 節的狀態圖）：</p>
+      <ol class="flow">
+        <li><b>到達？</b>目標在正前方，而且前方距離 ≤ 到達距離 → 停車、綠燈、嗶</li>
+        <li><b>要避障？</b>前方太近（且不是目標物），或左右太近 → 停、後退、轉向</li>
+        <li><b>看到目標？</b>→ 依偏移量左轉、右轉或前進</li>
+        <li><b>都沒有</b>→ 原地旋轉一圈，沒找到就前進一段再轉</li>
+      </ol>
+      <div class="note info">
+        <strong>為什麼「到達」排在「避障」前面？</strong>
+        目標物本身也是前方的物體，超音波會量到它。如果先判斷避障，車子在 20 公分處就會把目標當障礙物退開，永遠碰不到目標。
+      </div>
+
+      <h3>步驟四：動畫模擬</h3>
+
+  <p>在動手做車子之前，先在這裡玩玩看：車子會依照 3.4 節的狀態機自己搜尋、避障、接近目標。你可以改參數、放障礙物、移動目標，觀察車子的反應。這個模擬使用的判斷邏輯，和第 8 章階段 7 的 <code>main.py</code> 是同一套。</p>
+
+  
   <div class="simwrap">
     <canvas id="sim" width="800" height="520" aria-label="自走車行為模擬"></canvas>
     <div class="toolbar">
@@ -409,32 +819,54 @@
   <h3>動手試試看</h3>
   <ol>
     <li>把「避障距離」調到 8，按開始。碰撞次數會不會變多？為什麼？</li>
-    <li>把「避障距離」調到 40，車子還能靠近目標嗎？（提示：看第七節的「前方是目標物就不算障礙」）</li>
+    <li>把「避障距離」調到 40，車子還能靠近目標嗎？（提示：看 3.4 節的「前方是目標物就不算障礙」）</li>
     <li>用「加障礙物」把目標包起來，看車子會不會一直繞圈。這就是 V1 的限制，也是 V2 要用光達建圖的原因。</li>
     <li>按「隨機地圖」連續做 10 次，記下成功次數。障礙物多時成功率會明顯下降，這是 V1「沒有地圖、只靠反應」的限制，實車測試請從空曠場地開始。</li>
   </ol>
 
-  <h3>2. 超音波測距原理</h3>
-  <p>拖曳滑桿改變障礙物的距離，看聲波去、回的時間怎麼變。這就是階段 3 程式裡 <code>t * 0.034 / 2</code> 的由來。</p>
-  <div class="simwrap">
-    <canvas id="sonar" width="800" height="170" aria-label="超音波測距動畫"></canvas>
-    <label class="slider">障礙物距離 <output id="oSd">60</output> 公分<input id="rSd" type="range" min="5" max="200" value="60"></label>
-    <p class="small" id="sonarText"></p>
-  </div>
-</section>
+  
+    </section>
 
-<section id="s9">
-  <h2>九、實作手冊（階段 0～8）</h2>
-  <div class="note"><span class="tag">怎麼用</span>
-    一個階段做完、通過「驗收」再進下一個。卡住時先看「提示」：<b>提示 1</b> 只給方向，<b>提示 2</b> 給關鍵觀念，<b>提示 3</b> 才接近答案，請依序打開。「AI 提問範本」可以複製貼給 AI 助手，記得把自己的狀況補在後面，並要求它「先解釋，不要直接給完整程式」。
-  </div>
-  <p><strong>實作進度：</strong><span id="progressText">0 / 0</span>　<progress id="progressBar" value="0" max="1" style="width:200px"></progress></p>
-  <div id="manual"></div>
-</section>
+    <section id="code">
+      <h2><span class="num">10</span>程式使用說明</h2>
+      <h3>程式放在哪裡</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>位置</th><th>內容</th><th>對應階段</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><code>arduino/motor_test/</code></th><td>馬達測試程式</td><td>階段 2</td></tr>
+            <tr><th scope="row"><code>arduino/sonar_test/</code></th><td>三顆超音波測距程式</td><td>階段 3</td></tr>
+            <tr><th scope="row"><code>arduino/firmware/</code></th><td>完整韌體（指令、回報距離、安全保護）</td><td>階段 4</td></tr>
+            <tr><th scope="row"><code>raspberry-pi/car.py</code>、<code>teleop.py</code></th><td>序列控制函式庫、鍵盤手動測試</td><td>階段 4</td></tr>
+            <tr><th scope="row">手冊內的程式碼區塊</th><td><code>check.py</code>、<code>avoid.py</code>、<code>detect.py</code>、<code>main.py</code></td><td>階段 0、5、6、7</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>程式碼在 GitHub：<a href="https://github.com/fbkstj/cr6" target="_blank" rel="noopener">github.com/fbkstj/cr6</a>。Arduino 程式要放在<strong>與檔名同名的資料夾</strong>裡，Arduino IDE 才開得起來。階段 5～7 的程式目前放在第 8 章，可以按「複製」貼到樹莓派上存檔。</p>
+      <h3>完整的資料流程</h3>
+      <ol class="flow">
+        <li><b>感測</b>3 顆超音波、1 顆鏡頭</li>
+        <li><b>回報</b>Arduino 每 100 毫秒送 <code>D,左,中,右</code></li>
+        <li><b>判斷</b>樹莓派的 <code>main.py</code> 依狀態機決定動作</li>
+        <li><b>指令</b>送出 F / B / L / R / S 與燈號指令</li>
+        <li><b>執行</b>Arduino 驅動馬達、LED、蜂鳴器</li>
+      </ol>
+      <div class="note tip">
+        <strong>執行順序</strong>
+        每次上傳新的 Arduino 程式後，先用 <code>teleop.py</code> 確認車子還聽得懂指令，再跑自動程式。
+      </div>
+    </section>
 
-<section id="s10">
-  <h2>十、總驗收與測試紀錄</h2>
-  <h3>功能驗收表（對應第一節）</h3>
+    <section id="prompts">
+      <h2><span class="num">11</span>AI 助手提示語</h2>
+      <p>這些提示語可以貼給 AI 助手（例如 Claude）。使用時請把<strong>自己的狀況補在後面</strong>（接線、錯誤訊息、程式碼），並要求它「先解釋，不要直接給完整程式」，這樣才學得到東西。每個階段手冊裡也有同一份提示語。</p>
+      <div id="promptList"></div>
+    </section>
+
+    <section id="verify">
+      <h2><span class="num">12</span>測試與驗證</h2>
+
+  <h3>功能驗收表（對應 3.1 節）</h3>
   <table>
     <tr><th>編號</th><th>功能</th><th>通過</th><th>備註</th></tr>
     <tr><td>F1</td><td>手動測試模式</td><td><input type="checkbox" class="keep" data-k="f1"></td><td>階段 4</td></tr>
@@ -445,16 +877,103 @@
     <tr><td>F6</td><td>安全機制（開關、通訊中斷停車）</td><td><input type="checkbox" class="keep" data-k="f6"></td><td>階段 4、7</td></tr>
     <tr><td>F7</td><td>LED 與蜂鳴器狀態提示</td><td><input type="checkbox" class="keep" data-k="f7"></td><td>階段 4、7</td></tr>
   </table>
-  <h3>下一步（V2 想法）</h3>
+  
+      <h3>10 次測試紀錄（場景請固定）</h3>
+      <p class="small">勾選與文字只存在這台電腦的瀏覽器，換電腦會消失，正式報告請另外抄寫或截圖。</p>
+      <div id="testlog"></div>
+      <h3>評估指標</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>指標</th><th>怎麼算</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">成功率</th><td>成功次數 ÷ 10（成功＝停在目標約 15 公分處，且沒有碰到障礙物）</td></tr>
+            <tr><th scope="row">平均到達時間</th><td>只算成功的次數，用手機碼表量</td></tr>
+            <tr><th scope="row">碰撞次數</th><td>10 次中碰到障礙物的次數</td></tr>
+            <tr><th scope="row">停止距離誤差</th><td>停下時車頭到目標的實際距離與 15 公分的差</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>參數實驗</h3>
+      <p>一次只改一個參數，每個設定各測 10 次，比較成功率：</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>參數</th><th>建議測試值</th><th>預期影響</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><code>AVOID_CM</code></th><td>15、20、25</td><td>太小容易碰撞；太大容易繞圈</td></tr>
+            <tr><th scope="row"><code>CENTER_TOL</code></th><td>0.10、0.15、0.20</td><td>太小車子左右晃；太大停下時偏斜</td></tr>
+            <tr><th scope="row"><code>SPIN_SEC</code></th><td>實測值 ±0.5 秒</td><td>決定轉一圈後車頭方向是否準確</td></tr>
+            <tr><th scope="row">車速（PWM）</th><td>120、150、180</td><td>太快辨識跟不上；太慢耗時</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="small">「預期影響」是依原理推測，請用你的實測結果驗證或修正。</p>
+    </section>
+
+    <section id="safety">
+      <h2><span class="num">13</span>安全與注意事項</h2>
+      <ul>
+        <li><strong>電池：</strong>18650 用專用充電器、充電時有人看著；不可短路；電池盒線不要壓在輪子或螺絲旁；膨脹或發熱的電池立刻停用。</li>
+        <li><strong>第一次上電：</strong>一定先通過第 8 章階段 1 的「不上電檢查」，再把車子架空測試。</li>
+        <li><strong>測試場地：</strong>避開人群、寵物、樓梯口與桌邊。車子掉下去會摔壞。</li>
+        <li><strong>手要能隨時停車：</strong>測試時旁邊要有人能按 Ctrl+C 或關電源。</li>
+        <li><strong>隱私：</strong>鏡頭畫面不要拍到人臉後上傳到公開地方；報告截圖請先遮住人臉。</li>
+        <li><strong>誠實面對限制：</strong>這是教學原型，V1 沒有地圖，障礙物多時成功率會下降。報告要寫出實測數字與失敗原因。</li>
+      </ul>
+    </section>
+
+    <section id="faq">
+      <h2><span class="num">14</span>常見問題</h2>
+      <p>下表整理了每個階段手冊裡的常見問題。</p>
+      <div id="faqTable"></div>
+    </section>
+
+    <section id="v2">
+      <h2><span class="num">15</span>延伸：第二版（選做）</h2>
+
   <ul>
     <li>把顏色辨識換成 YOLO，辨識更多種目標物。</li>
     <li>加 2D 光達（如 LD06）建圖，做有系統的搜尋，解決「目標被包住」的問題。</li>
     <li>加輪速編碼器，讓前進距離與轉角更準。</li>
   </ul>
-</section>
-</main>
+
+    </section>
+
+    <section id="report">
+      <h2><span class="num">16</span>書面報告與評分</h2>
+      <h3>報告架構</h3>
+      <ol>
+        <li>動機與目標（為什麼做、要解決什麼問題）</li>
+        <li>系統架構（方塊圖、模組分工）</li>
+        <li>零件與接線（零件清單、接線表、實際照片）</li>
+        <li>程式設計（狀態機、判斷順序、關鍵參數）</li>
+        <li>測試結果（10 次測試紀錄、成功率、失敗原因分析）</li>
+        <li>調校與改善（調了哪個參數、前後比較）</li>
+        <li>問題與心得（遇到的困難、V1 的限制、下一步）</li>
+      </ol>
+      <h3>評分參考</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>項目</th><th>配分（參考）</th><th>重點</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">功能完成度</th><td>40</td><td>F1～F7 通過的數量與穩定度（做到避障也算完整成果）</td></tr>
+            <tr><th scope="row">測試與數據</th><td>20</td><td>10 次紀錄是否完整、有沒有做調參比較</td></tr>
+            <tr><th scope="row">書面報告</th><td>20</td><td>架構清楚、數據誠實、失敗原因有分析</td></tr>
+            <tr><th scope="row">安全與團隊合作</th><td>20</td><td>有做不上電檢查、分工與紀錄</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="small">配分只是建議，老師可依課程需求調整。</p>
+    </section>
+
+  </main>
+</div>
+
+<footer>
+  【專題實作】AI 避障搜尋自走車 ・ 程式碼：<a href="https://github.com/fbkstj/cr6" target="_blank" rel="noopener">github.com/fbkstj/cr6</a>
+</footer>
 
 <script>
+
 /* ============ 共用小工具 ============ */
 function keepGet(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
 function keepSet(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
@@ -491,10 +1010,10 @@ print("numpy", numpy.__version__)` }],
   goal: '硬體組裝完成，並用「不上電檢查」確認沒有短路、沒有接錯。',
   funcs: ['底盤、雙層板、馬達、輪子', '電源與開關', '依接線表連接所有模組'],
   steps: [
-    '依第六節的 1～6 步組裝底盤、電池、行動電源、L298N、Arduino、樹莓派、超音波與鏡頭。',
+    '依第 5 章「組裝步驟」的 1～6 步組裝底盤、電池、行動電源、L298N、Arduino、樹莓派、超音波與鏡頭。',
     '<b>拔掉 L298N 上 ENA、ENB 的跳線帽</b>，再把 ENA 接 D5、ENB 接 D6（這樣才能用 PWM 調速）。',
     '電池正極經過開關接 L298N 的 12V 端子，負極接 L298N 的 GND；再把 L298N 的 GND 接到 Arduino 的 GND。',
-    '依第五節接線表接上 IN1～IN4、三顆超音波、紅綠 LED、蜂鳴器。',
+    '依第 5 章接線表接上 IN1～IN4、三顆超音波、紅綠 LED、蜂鳴器。',
     '<b>不要</b>把 L298N 的 5V 輸出接到 Arduino 或樹莓派。Arduino 由樹莓派的 USB 供電。',
     '開關保持「關」，放入電池前先做下面的驗收。'
   ],
@@ -502,7 +1021,7 @@ print("numpy", numpy.__version__)` }],
   check: [
     '用電表的蜂鳴（通斷）檔量電池正負極接點：不應該通（沒有短路）',
     'Arduino GND、L298N GND、電池負極三者互相導通（共地）',
-    '第五節的接線表每一條都逐條打勾核對過',
+    '第 5 章的接線表每一條都逐條打勾核對過',
     '電池正負極方向正確，開關能切斷電源'
   ],
   hints: [
@@ -571,7 +1090,7 @@ void loop() {
     '上傳 sonar_test.ino。',
     '打開 Serial Monitor，速率選 115200。',
     '用尺在 10、20、50、100 公分處放一塊紙板，記錄三顆的讀數。',
-    '用上面的「超音波測距原理」動畫，理解為什麼要「除以 2」。',
+    '用第 9 章的「超音波測距原理」動畫，理解為什麼要「除以 2」。',
     '把紙板拿走，確認讀數變成 400。'
   ],
   codes: [{ name: 'sonar_test.ino（Arduino）', code:
@@ -749,7 +1268,7 @@ while True:
   goal: '車子往前走，遇到障礙物會停下、後退、轉向，然後繼續往前，連續 10 次至少 8 次不碰撞。',
   funcs: ['判斷：前方距離小於 AVOID_CM', '動作：停 → 後退 → 往空間大的一邊轉', '迴圈中持續送出指令（配合安全機制）'],
   steps: [
-    '先到上面的動畫模擬，把避障距離調成 20，觀察車子怎麼避開障礙物。',
+    '先到第 9 章的動畫模擬，把避障距離調成 20，觀察車子怎麼避開障礙物。',
     '在樹莓派建立 avoid.py，把車子放在空曠處，用紙箱當障礙物。',
     '執行 <code>python3 avoid.py</code>，觀察車子反應，按 Ctrl+C 停止。',
     '做 10 次測試，記錄成功次數。不成功就調整 AVOID_CM 或轉向時間。'
@@ -852,7 +1371,7 @@ if __name__ == '__main__':
   goal: '車子自己搜尋目標，看到後靠近並在約 15 公分處停下；過程中遇到障礙物會先避開。',
   funcs: ['狀態機：搜尋 → 接近 → 到達；避障可以打斷', '搜尋：原地旋轉一圈（SPIN_SEC 秒），沒看到就前進 2 秒再轉', '接近：依偏移量左右修正，再前進', '到達：停車、綠燈亮、蜂鳴器響一聲', '安全：鏡頭失效就停車；避障優先於接近（前方是目標物不算障礙，但側面太近一律避開）'],
   steps: [
-    '複習第七節的狀態圖，並在上面的動畫模擬中觀察每個狀態出現的時機。',
+    '複習 3.4 節的狀態圖，並在第 9 章的動畫模擬中觀察每個狀態出現的時機。',
     '把 car.py、detect.py、main.py 放在同一個資料夾。',
     '執行 <code>python3 main.py</code>，把車子放在空曠處，目標物放在 1.5 公尺外。',
     '依序測試：看得到目標（直接接近）→ 目標在背後（先搜尋）→ 中間放紙箱（先避障）。',
@@ -935,7 +1454,7 @@ finally:
   funcs: ['固定測試場景', '記錄成功率與失敗原因', '調整參數並比較前後差異'],
   steps: [
     '準備固定場景：車子起點、目標物位置、2～3 個紙箱位置，用膠帶在地上標記。',
-    '執行 10 次，在下面的表格記錄：是否成功、花費時間、失敗原因。',
+    '執行 10 次，在第 12 章的測試紀錄表記錄：是否成功、花費時間、失敗原因。',
     '挑出最常見的失敗原因，只調整一個參數（例如 AVOID_CM），再測 10 次比較。',
     '把前後兩次的成功率與調整的理由寫進報告。'
   ],
@@ -947,14 +1466,13 @@ finally:
     '失敗原因可以先分三類：撞到障礙物、找不到目標、停錯位置。針對最多的那類去改。'
   ],
   ai: ['我的自走車測試 10 次成功 6 次，失敗的 4 次中有 3 次是撞到障礙物。請問我下一步該調整哪些參數？請列出 3 個建議，並說明每個建議的理由與可能的副作用。'],
-  trouble: [['每次結果都不同', '光線、電池電量、地面都會影響。固定測試時間，電池要充飽。']],
-  table: true
+  trouble: [['每次結果都不同', '光線、電池電量、地面都會影響。固定測試時間，電池要充飽。']]
 }
 ];
 
 /* ============ 產生手冊 ============ */
 (function renderManual(){
-  const root = document.getElementById('manual');
+  const root = document.getElementById('stageList');
   let total = 0;
   const boxes = [];
   const mk = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
@@ -986,13 +1504,6 @@ finally:
       card.appendChild(head);
       card.appendChild(pre);
     });
-
-    if (st.table) {
-      let rows = '';
-      for (let i = 1; i <= 10; i++) rows += '<tr><td>' + i + '</td><td><input type="checkbox" class="keep" data-k="t' + i + '"></td><td><input type="text" class="keeptxt" data-k="tt' + i + '" placeholder="秒"></td><td><input type="text" class="keeptxt wide" data-k="tn' + i + '" placeholder="失敗原因（撞到／找不到／停錯位置）"></td></tr>';
-      card.appendChild(mk('h4', '', '測試紀錄表（資料只存在這台電腦的瀏覽器）'));
-      card.appendChild(mk('div', 'scroll', '<table><tr><th>次數</th><th>成功</th><th>時間</th><th>備註</th></tr>' + rows + '<tr><td colspan="4">成功次數：<b id="tSum">0</b> / 10</td></tr></table>'));
-    }
 
     card.appendChild(mk('h4', '', '驗收（全部通過才進下一階段）'));
     const ul = mk('ul', 'checks');
@@ -1048,20 +1559,6 @@ finally:
   }
   progress();
 
-  // 測試紀錄與總驗收：存在瀏覽器（失敗時照常運作）
-  function sum(){
-    const n = document.querySelectorAll('input.keep[data-k^="t"]:checked').length;
-    const s = document.getElementById('tSum'); if (s) s.textContent = n;
-  }
-  document.querySelectorAll('input.keep').forEach(el => {
-    el.checked = keepGet('kp-' + el.dataset.k) === '1';
-    el.addEventListener('change', () => { keepSet('kp-' + el.dataset.k, el.checked ? '1' : '0'); sum(); });
-  });
-  document.querySelectorAll('input.keeptxt').forEach(el => {
-    const v = keepGet('kp-' + el.dataset.k); if (v) el.value = v;
-    el.addEventListener('input', () => keepSet('kp-' + el.dataset.k, el.value));
-  });
-  sum();
 })();
 
 /* ============ 整車行為模擬 ============ */
@@ -1326,6 +1823,66 @@ finally:
   }
   requestAnimationFrame(draw);
 })();
+
+/* ============ 第 11 章：AI 提示語 / 第 12 章：測試紀錄 / 第 14 章：常見問題 ============ */
+(function(){
+  const mk = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
+  const pr = document.getElementById('promptList');
+  STAGES.forEach((st, i) => {
+    st.ai.forEach(t => {
+      const box = mk('div', 'prompt');
+      const head = mk('div', 'prompt-head');
+      head.appendChild(mk('span', '', st.title.replace('　', '：')));
+      const b = mk('button', 'copy', '複製'); b.type = 'button';
+      b.addEventListener('click', () => {
+        const done = () => { b.textContent = '已複製'; setTimeout(() => b.textContent = '複製', 1800); };
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, () => window.prompt('請手動複製：', t));
+        else window.prompt('請手動複製：', t);
+      });
+      head.appendChild(b); box.appendChild(head);
+      const pre = mk('pre'); pre.textContent = t; box.appendChild(pre);
+      pr.appendChild(box);
+    });
+  });
+
+  let rows = '';
+  for (let i = 1; i <= 10; i++) rows += '<tr><td>' + i + '</td><td><input type="checkbox" class="keep" data-k="t' + i + '" aria-label="第 ' + i + ' 次成功"></td><td><input type="text" class="keeptxt" data-k="tt' + i + '" placeholder="秒" aria-label="第 ' + i + ' 次時間"></td><td><input type="text" class="keeptxt wide" data-k="tn' + i + '" placeholder="失敗原因（撞到／找不到／停錯位置）" aria-label="第 ' + i + ' 次備註"></td></tr>';
+  document.getElementById('testlog').innerHTML = '<table><thead><tr><th>次數</th><th>成功</th><th>時間</th><th>備註</th></tr></thead><tbody>' + rows + '<tr><td colspan="4">成功次數：<b id="tSum">0</b> / 10</td></tr></tbody></table>';
+
+  document.getElementById('faqTable').innerHTML = '<table><thead><tr><th style="width:18%">階段</th><th style="width:32%">狀況</th><th>怎麼辦</th></tr></thead><tbody>' +
+    STAGES.map(st => st.trouble.map(t => '<tr><td>' + st.title.split('　')[0] + '</td><td>' + t[0] + '</td><td>' + t[1] + '</td></tr>').join('')).join('') + '</tbody></table>';
+
+  // 保存在瀏覽器的勾選與文字（失敗時照常運作）
+  function sum(){ const n = document.querySelectorAll('input.keep[data-k^="t"]:checked').length; const s = document.getElementById('tSum'); if (s) s.textContent = n; }
+  document.querySelectorAll('input.keep').forEach(el => {
+    el.checked = keepGet('kp-' + el.dataset.k) === '1';
+    el.addEventListener('change', () => { keepSet('kp-' + el.dataset.k, el.checked ? '1' : '0'); sum(); });
+  });
+  document.querySelectorAll('input.keeptxt').forEach(el => {
+    const v = keepGet('kp-' + el.dataset.k); if (v) el.value = v;
+    el.addEventListener('input', () => keepSet('kp-' + el.dataset.k, el.value));
+  });
+  sum();
+
+  // 動手算算看：用框寬度估算距離
+  const kw = document.getElementById('kw'), fp = document.getElementById('fp'), pw = document.getElementById('pw'), out = document.getElementById('calcOut');
+  function calc(){
+    const k = parseFloat(kw.value), f = parseFloat(fp.value), w = parseFloat(pw.value);
+    out.className = 'calc-out';
+    if (!(k > 0 && f > 0 && w > 0)) { out.textContent = '請輸入大於 0 的數字'; return; }
+    const d = k * f / w;
+    out.classList.add(d <= 15 ? 'lv2' : d <= 30 ? 'lv1' : 'lv0');
+    out.textContent = '估計距離 ≈ ' + d.toFixed(1) + ' 公分' + (d <= 15 ? '：到達距離內，車子會停下' : d <= 30 ? '：很近了，準備停下' : '：還有一段距離，繼續接近');
+  }
+  [kw, fp, pw].forEach(e => e.addEventListener('input', calc)); calc();
+
+  // 表格包上可橫向捲動的容器
+  document.querySelectorAll('table').forEach(t => {
+    if (t.parentElement.classList.contains('table-wrap')) return;
+    const w = document.createElement('div'); w.className = 'table-wrap'; t.parentNode.insertBefore(w, t); w.appendChild(t);
+  });
+})();
+
 </script>
 </body>
 </html>
