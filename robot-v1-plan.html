@@ -23,16 +23,58 @@
   .tag { display: inline-block; background: #d9822b; color: #fff; border-radius: 10px; padding: 0 8px; font-size: 12px; margin-right: 4px; }
   code { background: #eee; padding: 1px 5px; border-radius: 3px; }
   ol li, ul li { margin: 3px 0; }
+
+  nav.toc { position: sticky; top: 0; z-index: 20; background: #fff; border-bottom: 1px solid #ddd; padding: 8px 16px; display: flex; gap: 4px 16px; flex-wrap: wrap; font-size: 14px; }
+  nav.toc a { color: #2f6fb0; text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+  button { font: inherit; font-size: 14px; padding: 5px 12px; border: 1px solid #aaa; border-radius: 5px; background: #fff; cursor: pointer; }
+  button:hover { background: #f0eee8; }
+  button.primary { background: #d9822b; border-color: #d9822b; color: #fff; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; font-size: 14px; }
+  .toolbar .sep { flex: 1; }
+  label.inline { display: inline-block; margin-right: 10px; font-size: 14px; }
+  label.slider { display: block; font-size: 14px; margin: 6px 0; }
+  label.slider input { display: block; width: 100%; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+  .panel { border: 1px solid #e3e1da; border-radius: 6px; padding: 8px 14px; background: #fcfcfa; }
+  .panel h4, .simwrap h4 { margin: 8px 0; font-size: 15px; }
+  table.mini th { width: 46%; background: #f6f4ee; font-weight: normal; }
+  .small { font-size: 13px; color: #666; }
+  .led { display: inline-block; border-radius: 50%; width: 26px; height: 26px; line-height: 26px; text-align: center; font-size: 12px; background: #ccc; color: #fff; }
+  .led.onR { background: #e33; box-shadow: 0 0 8px #e33; }
+  .led.onG { background: #2a2; box-shadow: 0 0 8px #2a2; }
+  .buzz { display: inline-block; font-size: 13px; color: #bbb; }
+  .buzz.on { color: #d9822b; font-weight: bold; }
+  pre.code { background: #23272e; color: #e6e6e6; padding: 12px; border-radius: 0 0 6px 6px; overflow: auto; font-size: 13px; line-height: 1.5; margin: 0 0 12px; }
+  .codehead { display: flex; justify-content: space-between; align-items: center; background: #3a3f48; color: #fff; padding: 4px 10px; border-radius: 6px 6px 0 0; font-size: 13px; margin-top: 10px; }
+  .codehead button { padding: 2px 10px; font-size: 12px; }
+  .stage { border: 1px solid #e3e1da; border-radius: 8px; padding: 6px 16px 14px; margin-top: 18px; background: #fffdf8; }
+  .stage h3 { font-size: 18px; color: #b8651a; border-bottom: 2px solid #f0d9a8; padding-bottom: 4px; }
+  .stage h4 { margin: 14px 0 4px; font-size: 15px; }
+  ul.checks { list-style: none; padding-left: 4px; }
+  details.hint { border: 1px solid #f0d9a8; background: #fff7e6; border-radius: 6px; padding: 4px 10px; margin: 6px 0; font-size: 14px; }
+  details.hint summary { cursor: pointer; font-weight: bold; }
+  .aibox { background: #eef5fb; border: 1px solid #cfe3f5; border-radius: 6px; padding: 8px 12px; margin: 6px 0; font-size: 14px; }
+  .aibox p { margin: 0 0 6px; }
+  input.keeptxt { width: 80px; font: inherit; font-size: 13px; padding: 2px 4px; }
+  input.keeptxt.wide { width: 100%; min-width: 180px; }
+  canvas { width: 100%; height: auto; display: block; border: 1px solid #e3e1da; border-radius: 6px; background: #fff; }
+  @media (max-width: 720px) { section table, .stage table { display: block; overflow-x: auto; } }
 </style>
 </head>
 <body>
 <header>
   <h1>AI 避障搜尋自走車　第一版（V1）規劃</h1>
-  <p>目標：車子能自己行走、避開障礙物，並用鏡頭找到指定目標物後靠近停下</p>
+  <p>含動畫模擬與實作手冊　｜　目標：車子能自己行走、避開障礙物，並用鏡頭找到指定目標物後靠近停下</p>
 </header>
+<nav class="toc">
+  <a href="#s1">功能需求</a><a href="#s2">外觀圖</a><a href="#s3">方塊圖</a><a href="#s4">零件</a><a href="#s5">接線</a><a href="#s6">安裝</a><a href="#s7">流程</a>
+  <a href="#s8"><b>動畫模擬</b></a><a href="#s9"><b>實作手冊</b></a><a href="#s10">總驗收</a>
+</nav>
 <main>
 
-<section>
+<section id="s1">
   <h2>一、第一版功能需求</h2>
   <table>
     <tr><th style="width:56px">編號</th><th>功能</th><th>驗收標準</th></tr>
@@ -53,7 +95,7 @@
   <div class="note"><span class="tag">建議</span>V1 的目標物先用「單一顏色的物體」（例如紅色方塊），用 OpenCV 顏色辨識，學生容易理解。要換成 AI 辨識時，把這一步換成 YOLO 即可，其他部分不用改。</div>
 </section>
 
-<section>
+<section id="s2">
   <h2>二、外觀示意圖</h2>
   <h3>1. 俯視圖（從上往下看，車頭在上方）</h3>
   <svg viewBox="0 0 960 540" role="img" aria-label="自走車俯視圖">
@@ -170,7 +212,7 @@
   <div class="note"><span class="tag">重點</span>用雙層板的好處是：電池放下層，重心低、車子比較穩；樹莓派和 Arduino 放上層，方便接線和除錯。電池和行動電源是兩個獨立電源，可以避免馬達啟動時的電壓下降讓樹莓派重新開機。</div>
 </section>
 
-<section>
+<section id="s3">
   <h2>三、系統方塊圖</h2>
   <svg viewBox="0 0 960 330" role="img" aria-label="系統方塊圖">
     <defs><marker id="ar" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0 L10 4 L0 8 Z" fill="#555"/></marker></defs>
@@ -201,7 +243,7 @@
   </svg>
 </section>
 
-<section>
+<section id="s4">
   <h2>四、零件清單與參考價格</h2>
   <div class="scroll">
   <table>
@@ -226,7 +268,7 @@
   <div class="note" style="margin-top:10px"><span class="tag">提醒</span>價格只是參考，實際請以購買時的價格為準。學校如果已經有樹莓派、Arduino、電池，可以省下一半以上的預算。</div>
 </section>
 
-<section>
+<section id="s5">
   <h2>五、接線對照表</h2>
   <h3>1. Arduino ↔ L298N 馬達驅動</h3>
   <div class="scroll"><table>
@@ -265,7 +307,7 @@
   <div class="note"><span class="tag">注意</span>HC-SR04 的 ECHO 輸出是 5V，接 Arduino（5V 邏輯）沒問題；但如果之後改接樹莓派的 GPIO（3.3V），要加分壓電阻，否則會損壞樹莓派。這也是這一版把感測器接在 Arduino 上的原因。</div>
 </section>
 
-<section>
+<section id="s6">
   <h2>六、安裝步驟（給學生）</h2>
   <ol>
     <li><strong>組裝底盤：</strong>裝好馬達、輪子、萬向輪，把雙層板鎖好。</li>
@@ -285,7 +327,7 @@
   </ul>
 </section>
 
-<section>
+<section id="s7">
   <h2>七、行為流程（狀態機）</h2>
   <svg viewBox="0 0 960 320" role="img" aria-label="行為流程">
     <defs><marker id="ar2" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0 L10 4 L0 8 Z" fill="#555"/></marker></defs>
@@ -316,15 +358,974 @@
   <div class="note"><span class="tag">原則</span>不管現在是哪個狀態，只要超音波偵測到前方太近，一律先進入避障。避障的優先權比找目標高。</div>
 </section>
 
-<section>
-  <h2>八、下一步</h2>
-  <ul>
-    <li>確認預算與是否已有樹莓派、Arduino。</li>
-    <li>確定目標物（顏色、大小），決定 V1 用顏色辨識還是 YOLO。</li>
-    <li>接著可以寫 Arduino 馬達與超音波測試程式、樹莓派的鏡頭辨識程式。</li>
-  </ul>
+<section id="s8">
+  <h2>八、動畫模擬</h2>
+  <p>在動手做車子之前，先在這裡玩玩看：車子會依照第七節的狀態機自己搜尋、避障、接近目標。你可以改參數、放障礙物、移動目標，觀察車子的反應。這個模擬使用的判斷邏輯，和手冊階段 7 的 <code>main.py</code> 是同一套。</p>
+
+  <h3>1. 整台車的行為模擬</h3>
+  <div class="simwrap">
+    <canvas id="sim" width="800" height="520" aria-label="自走車行為模擬"></canvas>
+    <div class="toolbar">
+      <button id="btnRun" class="primary">▶ 開始</button>
+      <button id="btnReset">重置車子</button>
+      <button id="btnRandom">隨機地圖</button>
+      <button id="btnDefault">預設地圖</button>
+      <span class="sep"></span>
+      <label>點擊地圖：
+        <label class="inline"><input type="radio" name="mode" value="target" checked> 移動目標</label>
+        <label class="inline"><input type="radio" name="mode" value="add"> 加障礙物</label>
+        <label class="inline"><input type="radio" name="mode" value="del"> 移除障礙物</label>
+      </label>
+    </div>
+    <div class="grid2">
+      <div class="panel">
+        <h4>參數（對應 main.py 的常數）</h4>
+        <label class="slider">車速 <output id="oSpeed">40</output> 公分/秒<input id="rSpeed" type="range" min="20" max="80" value="40"></label>
+        <label class="slider">避障距離 AVOID_CM <output id="oAvoid">20</output> 公分<input id="rAvoid" type="range" min="8" max="40" value="20"></label>
+        <label class="slider">到達距離 ARRIVE_CM <output id="oArrive">15</output> 公分<input id="rArrive" type="range" min="8" max="30" value="15"></label>
+        <label class="slider">模擬速度 <output id="oRate">1</output> 倍<input id="rRate" type="range" min="1" max="4" value="1"></label>
+        <label class="inline"><input type="checkbox" id="cRays" checked> 顯示超音波光束</label>
+        <label class="inline"><input type="checkbox" id="cFov" checked> 顯示鏡頭視野</label>
+        <label class="inline"><input type="checkbox" id="cTrail" checked> 顯示行走軌跡</label>
+      </div>
+      <div class="panel">
+        <h4>即時資料</h4>
+        <table class="mini">
+          <tr><th>狀態</th><td><b id="vState">搜尋</b></td></tr>
+          <tr><th>超音波 左／中／右</th><td id="vDist">—</td></tr>
+          <tr><th>鏡頭看到目標</th><td id="vCam">—</td></tr>
+          <tr><th>送給 Arduino 的指令</th><td id="vAct">S</td></tr>
+          <tr><th>碰撞次數</th><td id="vHit">0</td></tr>
+          <tr><th>經過時間</th><td id="vTime">0.0 秒</td></tr>
+          <tr><th>LED／蜂鳴器</th><td><span id="ledR" class="led">紅</span> <span id="ledG" class="led">綠</span> <span id="buzz" class="buzz">嗶！</span></td></tr>
+        </table>
+        <p class="small" id="vCode">對應程式：—</p>
+      </div>
+    </div>
+    <h4>鏡頭畫面（樹莓派看到的）</h4>
+    <canvas id="cam" width="640" height="150" aria-label="鏡頭畫面模擬"></canvas>
+  </div>
+
+  <h3>動手試試看</h3>
+  <ol>
+    <li>把「避障距離」調到 8，按開始。碰撞次數會不會變多？為什麼？</li>
+    <li>把「避障距離」調到 40，車子還能靠近目標嗎？（提示：看第七節的「前方是目標物就不算障礙」）</li>
+    <li>用「加障礙物」把目標包起來，看車子會不會一直繞圈。這就是 V1 的限制，也是 V2 要用光達建圖的原因。</li>
+    <li>按「隨機地圖」連續做 10 次，記下成功次數。障礙物多時成功率會明顯下降，這是 V1「沒有地圖、只靠反應」的限制，實車測試請從空曠場地開始。</li>
+  </ol>
+
+  <h3>2. 超音波測距原理</h3>
+  <p>拖曳滑桿改變障礙物的距離，看聲波去、回的時間怎麼變。這就是階段 3 程式裡 <code>t * 0.034 / 2</code> 的由來。</p>
+  <div class="simwrap">
+    <canvas id="sonar" width="800" height="170" aria-label="超音波測距動畫"></canvas>
+    <label class="slider">障礙物距離 <output id="oSd">60</output> 公分<input id="rSd" type="range" min="5" max="200" value="60"></label>
+    <p class="small" id="sonarText"></p>
+  </div>
 </section>
 
+<section id="s9">
+  <h2>九、實作手冊（階段 0～8）</h2>
+  <div class="note"><span class="tag">怎麼用</span>
+    一個階段做完、通過「驗收」再進下一個。卡住時先看「提示」：<b>提示 1</b> 只給方向，<b>提示 2</b> 給關鍵觀念，<b>提示 3</b> 才接近答案，請依序打開。「AI 提問範本」可以複製貼給 AI 助手，記得把自己的狀況補在後面，並要求它「先解釋，不要直接給完整程式」。
+  </div>
+  <p><strong>實作進度：</strong><span id="progressText">0 / 0</span>　<progress id="progressBar" value="0" max="1" style="width:200px"></progress></p>
+  <div id="manual"></div>
+</section>
+
+<section id="s10">
+  <h2>十、總驗收與測試紀錄</h2>
+  <h3>功能驗收表（對應第一節）</h3>
+  <table>
+    <tr><th>編號</th><th>功能</th><th>通過</th><th>備註</th></tr>
+    <tr><td>F1</td><td>手動測試模式</td><td><input type="checkbox" class="keep" data-k="f1"></td><td>階段 4</td></tr>
+    <tr><td>F2</td><td>超音波避障（10 次 8 次成功）</td><td><input type="checkbox" class="keep" data-k="f2"></td><td>階段 5</td></tr>
+    <tr><td>F3</td><td>鏡頭辨識目標物</td><td><input type="checkbox" class="keep" data-k="f3"></td><td>階段 6</td></tr>
+    <tr><td>F4</td><td>搜尋目標</td><td><input type="checkbox" class="keep" data-k="f4"></td><td>階段 7</td></tr>
+    <tr><td>F5</td><td>接近目標並停在約 15 公分</td><td><input type="checkbox" class="keep" data-k="f5"></td><td>階段 7</td></tr>
+    <tr><td>F6</td><td>安全機制（開關、通訊中斷停車）</td><td><input type="checkbox" class="keep" data-k="f6"></td><td>階段 4、7</td></tr>
+    <tr><td>F7</td><td>LED 與蜂鳴器狀態提示</td><td><input type="checkbox" class="keep" data-k="f7"></td><td>階段 4、7</td></tr>
+  </table>
+  <h3>下一步（V2 想法）</h3>
+  <ul>
+    <li>把顏色辨識換成 YOLO，辨識更多種目標物。</li>
+    <li>加 2D 光達（如 LD06）建圖，做有系統的搜尋，解決「目標被包住」的問題。</li>
+    <li>加輪速編碼器，讓前進距離與轉角更準。</li>
+  </ul>
+</section>
 </main>
+
+<script>
+/* ============ 共用小工具 ============ */
+function keepGet(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
+function keepSet(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
+
+/* ============ 實作手冊資料 ============ */
+const STAGES = [
+{
+  title: '階段 0　準備工具與環境',
+  goal: '電腦、樹莓派、Arduino 都能開機、連線、寫程式。',
+  funcs: ['樹莓派作業系統安裝與遠端連線', 'Arduino IDE 安裝與上傳', 'Python 套件：OpenCV、pyserial'],
+  steps: [
+    '用 Raspberry Pi Imager 把 Raspberry Pi OS 寫入 microSD 卡，並在設定中填好帳號、Wi-Fi、開啟 SSH。',
+    '樹莓派開機後，用 SSH 或 VNC 連線。要看鏡頭畫面（階段 6）請用 VNC 或直接接螢幕。',
+    '安裝套件：<code>sudo apt update &amp;&amp; sudo apt install -y python3-opencv python3-serial python3-numpy</code>',
+    '電腦安裝 Arduino IDE，接上 Arduino，工具 → 開發板選「Arduino Uno」，並選對連接埠。',
+    '開啟範例 File → Examples → 01.Basics → Blink 並上傳，確認板上的 LED 會閃。'
+  ],
+  codes: [{ name: 'check.py（在樹莓派執行）', code:
+`import cv2, serial, numpy
+print("OpenCV", cv2.__version__)
+print("pyserial", serial.__version__)
+print("numpy", numpy.__version__)` }],
+  check: ['Blink 範例上傳成功，LED 會閃', '<code>python3 check.py</code> 印出三個版本號，沒有錯誤'],
+  hints: [
+    '先確認每個工具「各自能用」，再把它們接在一起。不要一次裝完再一起除錯。',
+    'SSH 連不上時：確認電腦和樹莓派在同一個 Wi-Fi，再試 <code>ping raspberrypi.local</code>；不行就改用樹莓派的 IP 位址。',
+    '用 pip 安裝時出現 externally-managed-environment 錯誤，代表系統不讓你直接裝。改用步驟 3 的 apt 指令，不要硬加 --break-system-packages。'
+  ],
+  ai: ['我用 Raspberry Pi OS（Bookworm）想在 Python 使用 OpenCV 和 pyserial。請告訴我最安全的安裝方式，並教我怎麼測試有沒有裝成功。請先解釋原因，再給指令。'],
+  trouble: [['找不到 raspberrypi.local', '改用 IP 位址連線；IP 可以接螢幕後輸入 <code>hostname -I</code> 查詢，或到路由器管理頁面看。'], ['apt 找不到套件', '先執行 <code>sudo apt update</code>，並確認網路正常。']]
+},
+{
+  title: '階段 1　組裝與接線（先不要上電）',
+  goal: '硬體組裝完成，並用「不上電檢查」確認沒有短路、沒有接錯。',
+  funcs: ['底盤、雙層板、馬達、輪子', '電源與開關', '依接線表連接所有模組'],
+  steps: [
+    '依第六節的 1～6 步組裝底盤、電池、行動電源、L298N、Arduino、樹莓派、超音波與鏡頭。',
+    '<b>拔掉 L298N 上 ENA、ENB 的跳線帽</b>，再把 ENA 接 D5、ENB 接 D6（這樣才能用 PWM 調速）。',
+    '電池正極經過開關接 L298N 的 12V 端子，負極接 L298N 的 GND；再把 L298N 的 GND 接到 Arduino 的 GND。',
+    '依第五節接線表接上 IN1～IN4、三顆超音波、紅綠 LED、蜂鳴器。',
+    '<b>不要</b>把 L298N 的 5V 輸出接到 Arduino 或樹莓派。Arduino 由樹莓派的 USB 供電。',
+    '開關保持「關」，放入電池前先做下面的驗收。'
+  ],
+  codes: [],
+  check: [
+    '用電表的蜂鳴（通斷）檔量電池正負極接點：不應該通（沒有短路）',
+    'Arduino GND、L298N GND、電池負極三者互相導通（共地）',
+    '第五節的接線表每一條都逐條打勾核對過',
+    '電池正負極方向正確，開關能切斷電源'
+  ],
+  hints: [
+    '接線最常見的錯誤是「GND 沒有共地」，沒共地的話訊號怎麼送都沒反應。',
+    'ENA、ENB 的跳線帽一定要拔掉，否則馬達會一直全速，D5、D6 的 PWM 沒作用。',
+    '建議紅線＝正極、黑線＝GND、其他顏色＝訊號，並且在接線表上用筆逐條打勾。接完請同學交叉檢查一次。'
+  ],
+  ai: ['我用 Arduino Uno 加 L298N 驅動兩顆直流減速馬達，電源是 2 顆 18650（7.4V），樹莓派用行動電源。請列出「上電前」要用電表檢查的項目與順序，並說明每一項為什麼要檢查。'],
+  trouble: [['一上電 Arduino 就重開機', '立刻斷電。檢查電池線有沒有短路，確認 5V 沒有和 12V 接在一起。'], ['線太亂分不清楚', '用束線帶整理，並在每條線兩端貼標籤（例如 IN1、ENA）。']]
+},
+{
+  title: '階段 2　馬達測試（F1 的基礎）',
+  goal: '四個基本動作（前進、後退、左轉、右轉）都正確，車子能直線前進。',
+  funcs: ['<code>motor(left, right)</code>：用一個函式控制兩顆馬達', '正值＝前進、負值＝後退、數值大小＝速度（PWM）'],
+  steps: [
+    '<b>把車子架空</b>（用盒子墊高，輪子不要碰地）。',
+    '上傳下面的 motor_test.ino，打開開關。',
+    '觀察動作順序：前進 → 後退 → 左轉 → 右轉。',
+    '輪子轉的方向不對：把<b>那顆馬達</b>接在 L298N 的兩條線對調。左右顛倒：對調左右兩組。',
+    '放回地面，看是否走直線；若偏向一邊，微調兩邊的 PWM，例如 <code>motor(150, 140)</code>。'
+  ],
+  codes: [{ name: 'motor_test.ino（Arduino）', code:
+`// 階段 2：馬達測試
+const int ENA = 5, IN1 = 7, IN2 = 8;
+const int IN3 = 9, IN4 = 10, ENB = 6;
+
+void setup() {
+  pinMode(ENA, OUTPUT); pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT); pinMode(IN4, OUTPUT); pinMode(ENB, OUTPUT);
+}
+
+// left、right：-255（全速後退）～ 255（全速前進）
+void motor(int left, int right) {
+  digitalWrite(IN1, left > 0);
+  digitalWrite(IN2, left < 0);
+  analogWrite(ENA, abs(left));
+  digitalWrite(IN3, right > 0);
+  digitalWrite(IN4, right < 0);
+  analogWrite(ENB, abs(right));
+}
+
+void loop() {
+  motor(150, 150);   delay(1000);   // 前進
+  motor(0, 0);       delay(500);
+  motor(-150, -150); delay(1000);   // 後退
+  motor(0, 0);       delay(500);
+  motor(-150, 150);  delay(800);    // 原地左轉
+  motor(0, 0);       delay(500);
+  motor(150, -150);  delay(800);    // 原地右轉
+  motor(0, 0);       delay(1500);
+}` }],
+  check: ['四個動作方向都正確', '前進 1 公尺，偏離不超過 10 公分', '關掉開關，馬達立刻停止'],
+  hints: [
+    '每次只改一件事。先確認左輪正確，再確認右輪。',
+    '輪子轉反了，不用改程式，把那顆馬達的兩條線對調就好。',
+    '馬達完全不動：先檢查 ENA/ENB 是否接到 D5/D6，再用電表量 L298N 的 12V 端子有沒有電。馬達只會嗡嗡叫：PWM 數字太小，加到 120 以上。'
+  ],
+  ai: ['我的 L298N 接法：ENA=D5、IN1=D7、IN2=D8、IN3=D9、IN4=D10、ENB=D6。左輪正常，右輪不轉。請列出我該依序檢查的項目，不要直接改我的程式。'],
+  trouble: [['馬達只嗡嗡叫不轉', 'PWM 太小或電池沒電，把速度加大、換電池。'], ['左右輪速度差很多', '馬達本來就有個體差異，在程式裡把較快那邊的數值調小一點。']]
+},
+{
+  title: '階段 3　超音波測距',
+  goal: '三顆超音波都能讀到正確距離，誤差不超過 2 公分。',
+  funcs: ['<code>readCm(i)</code>：讀第 i 顆感測器的距離', '沒有回波時回傳 400，代表「很遠」', '依序讀三顆，避免互相干擾'],
+  steps: [
+    '上傳 sonar_test.ino。',
+    '打開 Serial Monitor，速率選 115200。',
+    '用尺在 10、20、50、100 公分處放一塊紙板，記錄三顆的讀數。',
+    '用上面的「超音波測距原理」動畫，理解為什麼要「除以 2」。',
+    '把紙板拿走，確認讀數變成 400。'
+  ],
+  codes: [{ name: 'sonar_test.ino（Arduino）', code:
+`// 階段 3：超音波測距
+const int TRIG[3] = {2, 4, 11};   // 左、中、右
+const int ECHO[3] = {3, 12, 13};
+
+void setup() {
+  Serial.begin(115200);
+  for (int i = 0; i < 3; i++) {
+    pinMode(TRIG[i], OUTPUT);
+    pinMode(ECHO[i], INPUT);
+  }
+}
+
+int readCm(int i) {
+  digitalWrite(TRIG[i], LOW);  delayMicroseconds(2);
+  digitalWrite(TRIG[i], HIGH); delayMicroseconds(10);   // 發出 10 微秒的觸發訊號
+  digitalWrite(TRIG[i], LOW);
+  unsigned long t = pulseIn(ECHO[i], HIGH, 25000);      // 量回波時間，最多等 25 毫秒
+  if (t == 0) return 400;                               // 沒收到回波 → 視為很遠
+  return t * 0.034 / 2;                                 // 聲速約 0.034 公分/微秒，去回要除以 2
+}
+
+void loop() {
+  Serial.print("L="); Serial.print(readCm(0));
+  Serial.print("  C="); Serial.print(readCm(1));
+  Serial.print("  R="); Serial.println(readCm(2));
+  delay(100);
+}` }],
+  check: ['10～100 公分範圍內，三顆讀數和尺量相差不超過 2 公分', '沒有障礙物時顯示 400', '手在前方移動時，數字會跟著變'],
+  hints: [
+    '超音波的原理：發出聲音 → 碰到東西反彈 → 計算時間。距離 ＝ 時間 × 聲速 ÷ 2。',
+    '為什麼要除以 2？因為量到的時間是聲音「去」加「回」的總時間，單程只有一半。',
+    '讀數一直是 0 或 400：先檢查 TRIG、ECHO 有沒有接反、VCC 是否接 5V。三顆同時亂跳：讀取要一顆接一顆，不要同時發聲。'
+  ],
+  ai: ['我用 Arduino 的 pulseIn 讀 HC-SR04 超音波感測器，讀數常常是 0 或 400。請說明可能的原因，並教我怎麼一步一步排除。請先問我需要的資訊，不要直接給完整程式。'],
+  trouble: [['距離太近（小於 2 公分）讀不到', 'HC-SR04 有最小測量距離，約 2 公分，這是正常的。'], ['斜面或布料讀數不穩', '聲音被反射到別處或被吸收。測試時用平整的紙板。']]
+},
+{
+  title: '階段 4　序列通訊與完整韌體（F1、F6、F7）',
+  goal: '樹莓派能用單一字元指令控制 Arduino，並收到三顆超音波的距離。',
+  funcs: ['Arduino 韌體：接收指令、回報距離、安全保護', '<code>car.py</code>：樹莓派端的控制函式庫', '<code>teleop.py</code>：用鍵盤手動測試', '安全：1 秒沒收到指令自動停車；前進時前方小於 12 公分硬體直接停'],
+  steps: [
+    '上傳下面的 firmware.ino 到 Arduino。',
+    '用 USB 線把 Arduino 接到樹莓派，執行 <code>ls /dev/ttyACM*</code> 確認連接埠（通常是 ttyACM0）。',
+    '在樹莓派建立 car.py 和 teleop.py，把車輪架空，執行 <code>python3 teleop.py</code>。',
+    '依序輸入 F、B、L、R、S，確認車輪動作正確；輸入 1～5，確認 LED 與蜂鳴器有反應。',
+    '測試安全機制：輸入 F 後不要再輸入任何東西，約 1 秒後車輪必須自己停。'
+  ],
+  codes: [
+    { name: 'firmware.ino（Arduino）', code:
+`// 階段 4：完整韌體
+// 指令：F 前進  B 後退  L 左轉  R 右轉  S 停止  + - 調速
+//       1 紅燈亮  2 紅燈滅  3 綠燈亮  4 綠燈滅  5 嗶一聲
+const int ENA = 5, IN1 = 7, IN2 = 8, IN3 = 9, IN4 = 10, ENB = 6;
+const int TRIG[3] = {2, 4, 11};
+const int ECHO[3] = {3, 12, 13};
+const int BUZZER = A1, LED_RED = A2, LED_GREEN = A3;
+
+int speedPwm = 150;
+int curL = 0, curR = 0;               // 目前馬達狀態
+unsigned long lastCmd = 0, lastReport = 0;
+
+void motor(int left, int right) {
+  curL = left; curR = right;
+  digitalWrite(IN1, left > 0);  digitalWrite(IN2, left < 0);  analogWrite(ENA, abs(left));
+  digitalWrite(IN3, right > 0); digitalWrite(IN4, right < 0); analogWrite(ENB, abs(right));
+}
+
+int readCm(int i) {
+  digitalWrite(TRIG[i], LOW);  delayMicroseconds(2);
+  digitalWrite(TRIG[i], HIGH); delayMicroseconds(10);
+  digitalWrite(TRIG[i], LOW);
+  unsigned long t = pulseIn(ECHO[i], HIGH, 25000);
+  if (t == 0) return 400;
+  return t * 0.034 / 2;
+}
+
+void handle(char c) {
+  switch (c) {
+    case 'F': motor(speedPwm, speedPwm); break;
+    case 'B': motor(-speedPwm, -speedPwm); break;
+    case 'L': motor(-speedPwm, speedPwm); break;
+    case 'R': motor(speedPwm, -speedPwm); break;
+    case 'S': motor(0, 0); break;
+    case '+': speedPwm = min(255, speedPwm + 20); break;
+    case '-': speedPwm = max(80, speedPwm - 20); break;
+    case '1': digitalWrite(LED_RED, HIGH); break;
+    case '2': digitalWrite(LED_RED, LOW); break;
+    case '3': digitalWrite(LED_GREEN, HIGH); break;
+    case '4': digitalWrite(LED_GREEN, LOW); break;
+    case '5': digitalWrite(BUZZER, HIGH); delay(200); digitalWrite(BUZZER, LOW); break;
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  int outs[] = {ENA, IN1, IN2, IN3, IN4, ENB, BUZZER, LED_RED, LED_GREEN};
+  for (int p : outs) pinMode(p, OUTPUT);
+  for (int i = 0; i < 3; i++) { pinMode(TRIG[i], OUTPUT); pinMode(ECHO[i], INPUT); }
+  lastCmd = millis();
+}
+
+void loop() {
+  while (Serial.available()) {
+    char ch = Serial.read();
+    if (ch == '\\n' || ch == '\\r') continue;
+    handle(ch);
+    lastCmd = millis();
+  }
+  // 安全 1：超過 1 秒沒收到指令 → 停車
+  if (millis() - lastCmd > 1000) motor(0, 0);
+
+  // 每 100 毫秒量一次距離並回報
+  if (millis() - lastReport >= 100) {
+    lastReport = millis();
+    int l = readCm(0), c = readCm(1), r = readCm(2);
+    // 安全 2：前進時前方小於 12 公分 → 直接停
+    if (curL > 0 && curR > 0 && c < 12) motor(0, 0);
+    Serial.print("D,"); Serial.print(l); Serial.print(",");
+    Serial.print(c);    Serial.print(","); Serial.println(r);
+  }
+}` },
+    { name: 'car.py（樹莓派）', code:
+`import serial, time
+
+class Car:
+    def __init__(self, port='/dev/ttyACM0'):
+        self.ser = serial.Serial(port, 115200, timeout=0.02)
+        self.dist = (400, 400, 400)      # 左、中、右（公分）
+        time.sleep(2)                    # 開啟序列埠會讓 Arduino 重開機，要等它
+
+    def send(self, cmd):
+        self.ser.write(cmd.encode())
+
+    def update(self):
+        """讀取序列埠、更新最新距離，回傳 (左, 中, 右)"""
+        while self.ser.in_waiting:
+            line = self.ser.readline().decode(errors='ignore').strip()
+            if line.startswith('D,'):
+                try:
+                    l, c, r = (int(v) for v in line[2:].split(','))
+                    self.dist = (l, c, r)
+                except ValueError:
+                    pass                 # 收到壞資料就略過
+        return self.dist
+
+    def stop(self):
+        self.send('S')` },
+    { name: 'teleop.py（樹莓派）', code:
+`from car import Car
+
+car = Car()
+while True:
+    cmd = input("指令 F/B/L/R/S/1~5，q 離開：").strip().upper()
+    if cmd == 'Q':
+        car.stop()
+        break
+    if cmd:
+        car.send(cmd[0])
+    print("距離 左/中/右：", car.update())` }
+  ],
+  check: ['F、B、L、R、S 動作都正確', '紅燈、綠燈、蜂鳴器都能用指令控制', '送出 F 之後不再送指令，約 1 秒後自動停車（F6）', '前進時用手擋在前方約 10 公分，馬達會自己停（F6）'],
+  hints: [
+    '分工：Arduino 負責「硬體反應快」，樹莓派負責「思考」。兩邊用單一字元溝通，簡單又不容易出錯。',
+    '開啟序列埠時 Arduino 會自動重開機，所以 Python 要等約 2 秒再送指令。',
+    '找不到 ttyACM0：換一條 USB 線（有些線只能充電）。出現 Permission denied：執行 <code>sudo usermod -a -G dialout $USER</code> 後重新登入。'
+  ],
+  ai: ['我用 Python 的 pyserial 和 Arduino 溝通，Arduino 每 100 毫秒送出一行 "D,左,中,右"。請教我怎麼在 Python 裡穩定地讀到最新一筆資料，並說明為什麼不能每次只讀一行。請先解釋觀念。'],
+  trouble: [['車子動一下就停', '這是 1 秒安全機制。樹莓派要持續送指令，在階段 5、7 的迴圈裡每一輪都送一次。'], ['距離一直是 400', '回到階段 3 單獨測試超音波，確認接線再回來。']]
+},
+{
+  title: '階段 5　超音波避障（F2）',
+  goal: '車子往前走，遇到障礙物會停下、後退、轉向，然後繼續往前，連續 10 次至少 8 次不碰撞。',
+  funcs: ['判斷：前方距離小於 AVOID_CM', '動作：停 → 後退 → 往空間大的一邊轉', '迴圈中持續送出指令（配合安全機制）'],
+  steps: [
+    '先到上面的動畫模擬，把避障距離調成 20，觀察車子怎麼避開障礙物。',
+    '在樹莓派建立 avoid.py，把車子放在空曠處，用紙箱當障礙物。',
+    '執行 <code>python3 avoid.py</code>，觀察車子反應，按 Ctrl+C 停止。',
+    '做 10 次測試，記錄成功次數。不成功就調整 AVOID_CM 或轉向時間。'
+  ],
+  codes: [{ name: 'avoid.py（樹莓派）', code:
+`import time
+from car import Car
+
+AVOID_CM = 20                 # 前方小於這個距離就避障
+car = Car()
+
+try:
+    while True:
+        l, c, r = car.update()
+        if c < AVOID_CM:
+            car.send('S'); time.sleep(0.2)                    # 停
+            car.send('B'); time.sleep(0.5)                    # 後退
+            car.send('L' if l > r else 'R'); time.sleep(0.6)  # 往空間大的一邊轉
+        else:
+            car.send('F')                                     # 沒事就前進
+        time.sleep(0.05)
+except KeyboardInterrupt:
+    pass
+finally:
+    car.stop()` }],
+  check: ['面對紙箱會停下，不會撞上', '避開後會繼續前進', '10 次測試至少 8 次成功（成功＝沒有碰到障礙物）'],
+  hints: [
+    '先想三件事：怎麼知道前面有東西？怎麼停下來？停下來之後往哪邊走？',
+    '往空間比較大的那一邊轉：比較左、右兩顆超音波的距離，哪邊大就往哪邊轉。',
+    '車子在障礙物前面來回抖動：避障時轉久一點，或把 AVOID_CM 調大 5 公分。側面擦撞：加上「左或右小於 12 公分也算要避障」的條件。'
+  ],
+  ai: ['我寫了一個自走車避障程式：前方距離小於 20 公分就停下、後退、轉向。但車子會在牆前面來回抖動。請先問我需要補充哪些資訊，再給我 3 個可能的原因和各自的檢查方法。'],
+  trouble: [['車子太晚停、撞到', '車速太快或 AVOID_CM 太小，先降低速度或調大距離。'], ['一直在原地轉圈', '轉向時間太短，前方還是有障礙物，把 0.6 秒加長。']]
+},
+{
+  title: '階段 6　鏡頭辨識目標物（F3）',
+  goal: '鏡頭畫面中能框出目標物，並算出它偏左、偏右，以及大約的距離。',
+  funcs: ['<code>find_target(frame)</code>：回傳「有沒有找到、偏移量、寬度」', '偏移量：-1（最左）～ 0（正中）～ +1（最右）', '<code>distance_cm(width)</code>：用已知寬度估算距離'],
+  steps: [
+    '準備一個紅色、約 5 公分寬的方塊當目標物（顏色要和背景明顯不同）。',
+    '在樹莓派（用 VNC 或接螢幕）建立 detect.py 並執行，會開啟鏡頭畫面。',
+    '把目標物放在畫面左、中、右，確認顯示的 offset 是負值、接近 0、正值。',
+    '校正距離：把目標物放在正前方 50 公分，記下畫面顯示的框寬度 w，算 <code>FOCAL_PX = w × 50 ÷ KNOWN_WIDTH_CM</code>，寫回程式。',
+    '放在 30、70 公分處，看估算距離是否合理（誤差 ±15% 以內即可）。'
+  ],
+  codes: [{ name: 'detect.py（樹莓派）', code:
+`import cv2
+
+KNOWN_WIDTH_CM = 5.0                      # 目標物真實寬度
+FOCAL_PX = 600.0                          # 先用預設值，校正後再改
+LOW1, HIGH1 = (0, 120, 70), (10, 255, 255)       # 紅色的 HSV 範圍（低端）
+LOW2, HIGH2 = (170, 120, 70), (180, 255, 255)    # 紅色的 HSV 範圍（高端）
+MIN_AREA = 500                            # 太小的雜點不要
+
+def find_target(frame):
+    """回傳 (找到嗎, 偏移量 -1~+1, 框寬度px, 框)"""
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, LOW1, HIGH1) | cv2.inRange(hsv, LOW2, HIGH2)
+    mask = cv2.medianBlur(mask, 5)                        # 去除雜訊
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours = [c for c in contours if cv2.contourArea(c) > MIN_AREA]
+    if not contours:
+        return False, 0.0, 0, None
+    x, y, w, h = cv2.boundingRect(max(contours, key=cv2.contourArea))
+    half = frame.shape[1] / 2
+    offset = ((x + w / 2) - half) / half
+    return True, offset, w, (x, y, w, h)
+
+def distance_cm(width_px):
+    return KNOWN_WIDTH_CM * FOCAL_PX / width_px
+
+if __name__ == '__main__':
+    cap = cv2.VideoCapture(0)
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        found, offset, w, box = find_target(frame)
+        if found:
+            x, y, bw, bh = box
+            cv2.rectangle(frame, (x, y), (x + bw, y + bh), (0, 255, 0), 2)
+            text = f"offset={offset:+.2f} dist={distance_cm(w):.0f}cm"
+            cv2.putText(frame, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        cv2.imshow('target', frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+    cap.release()
+    cv2.destroyAllWindows()` }],
+  check: ['畫面上正確框出目標物', '目標物在左／中／右時，offset 的正負與大小合理', '拿走目標物後，不會誤框到別的東西', '估算距離與實際距離誤差在 ±15% 以內'],
+  hints: [
+    '辨識顏色用 HSV 比 RGB 容易：光線變亮變暗時，H（色相）幾乎不變，只有 V（亮度）在變。',
+    '紅色在 HSV 的 H 會繞到兩端（0～10 與 170～180），所以程式裡要用兩段範圍相加。',
+    '抓到太多雜點：調高 MIN_AREA 或 S 的下限。抓不到目標：把 S、V 的下限調低。教室燈光和窗邊的光不同，要在實際環境調一次。'
+  ],
+  ai: ['我用 OpenCV 在 HSV 色彩空間找紅色方塊，但在教室日光燈下偵測不穩定，有時抓不到、有時抓到別的紅色東西。請教我怎麼調整 HSV 範圍，並說明每個參數（H、S、V）改大改小會有什麼影響。'],
+  trouble: [['SSH 執行時 imshow 出錯', 'SSH 沒有畫面，改用 VNC 或接螢幕；或把 imshow 換成把結果印在終端機。'], ['畫面延遲、很卡', '把解析度降到 320×240：<code>cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)</code>。']]
+},
+{
+  title: '階段 7　搜尋與接近：整合（F4～F7）',
+  goal: '車子自己搜尋目標，看到後靠近並在約 15 公分處停下；過程中遇到障礙物會先避開。',
+  funcs: ['狀態機：搜尋 → 接近 → 到達；避障可以打斷', '搜尋：原地旋轉一圈（SPIN_SEC 秒），沒看到就前進 2 秒再轉', '接近：依偏移量左右修正，再前進', '到達：停車、綠燈亮、蜂鳴器響一聲', '安全：鏡頭失效就停車；避障優先於接近（前方是目標物不算障礙，但側面太近一律避開）'],
+  steps: [
+    '複習第七節的狀態圖，並在上面的動畫模擬中觀察每個狀態出現的時機。',
+    '把 car.py、detect.py、main.py 放在同一個資料夾。',
+    '執行 <code>python3 main.py</code>，把車子放在空曠處，目標物放在 1.5 公尺外。',
+    '依序測試：看得到目標（直接接近）→ 目標在背後（先搜尋）→ 中間放紙箱（先避障）。',
+    '先量測：讓車子原地左轉，用手機碼表量「轉一圈幾秒」，把結果填進 SPIN_SEC。按 Ctrl+C 可隨時停車；不穩時再調整 CENTER_TOL 與 AVOID_CM。'
+  ],
+  codes: [{ name: 'main.py（樹莓派）', code:
+`import time
+import cv2
+from car import Car
+from detect import find_target
+
+AVOID_CM = 20       # 前方小於這個距離 → 避障
+SIDE_CM = 12        # 左右小於這個距離 → 避障
+ARRIVE_CM = 15      # 到達目標的距離
+CENTER_TOL = 0.15   # 目標偏離中心多少以內，算「在正前方」
+SPIN_SEC = 4        # 原地轉一圈需要的秒數（要用你的車實測後修改！）
+
+car = Car()
+cap = cv2.VideoCapture(0)
+state = 'SEARCH'
+search_t0 = time.time()
+
+def avoid(l, r):
+    car.send('S'); time.sleep(0.2)
+    car.send('B'); time.sleep(0.5)
+    car.send('L' if l > r else 'R'); time.sleep(0.6)
+
+try:
+    while True:
+        l, c, r = car.update()
+        ok, frame = cap.read()
+        if not ok:                       # 安全：鏡頭失效 → 停車（F6）
+            break
+        found, offset, w, _ = find_target(frame)
+        facing = found and abs(offset) < CENTER_TOL     # 目標在正前方嗎
+
+        if state == 'ARRIVED':
+            car.stop()
+        elif facing and c <= ARRIVE_CM:                 # 正前方就是目標物 → 到達
+            state = 'ARRIVED'
+            car.stop(); car.send('3'); car.send('5')
+        elif (c < AVOID_CM and not facing) or min(l, r) < SIDE_CM:
+            state = 'AVOID'
+            car.send('1'); avoid(l, r); car.send('2')
+            state = 'SEARCH'; search_t0 = time.time()
+        elif found:
+            state = 'APPROACH'
+            car.send('3')
+            if offset < -CENTER_TOL:
+                car.send('L')
+            elif offset > CENTER_TOL:
+                car.send('R')
+            else:
+                car.send('F')
+        else:
+            if state != 'SEARCH':
+                search_t0 = time.time()
+            state = 'SEARCH'
+            car.send('4')
+            t = (time.time() - search_t0) % (SPIN_SEC + 2)   # 轉一圈、前進 2 秒，循環
+            car.send('L' if t < SPIN_SEC else 'F')
+        time.sleep(0.03)
+except KeyboardInterrupt:
+    pass
+finally:
+    car.stop()
+    cap.release()` }],
+  check: ['F4：目標在背後時，車子會旋轉搜尋', 'F5：看到目標後會靠近，約 15 公分處停下', 'F6：按 Ctrl+C 或拔掉鏡頭，車子都會停', 'F7：避障時紅燈亮、看到目標時綠燈亮、到達時嗶一聲', '中間放紙箱時，會先避開再繼續找'],
+  hints: [
+    '先把想法畫成狀態圖：搜尋 → 接近 → 到達，避障可以在任何時候打斷。程式就是把圖翻成 if / elif。',
+    '避障優先於接近，但要注意：如果前方的東西「就是目標物」，那是到達，不是障礙。所以判斷順序是：先看到達 → 再看避障 → 最後才是接近。',
+    '車子一直在原地轉、或前進方向總是亂掉：SPIN_SEC 要等於「原地轉一圈」的實測秒數。多轉或少轉，轉完車頭方向就不是原來的方向。車子靠近目標時一直左右晃：把 CENTER_TOL 調大一點（例如 0.2）。'
+  ],
+  ai: ['我的自走車用狀態機：SEARCH、APPROACH、AVOID、ARRIVED。避障優先於接近，但目標物在正前方時要算到達而不是避障。請幫我檢查這個判斷順序有沒有漏洞，列出 3 種可能出錯的情況，不要直接改我的程式。'],
+  trouble: [['車子停在目標前面 20 公分左右不再靠近', '檢查 ARRIVE_CM 與 AVOID_CM 的大小關係，ARRIVE_CM 要小於 AVOID_CM，且「到達」的判斷要在「避障」之前。'], ['目標被別的東西擋住還是判成到達', '這是 V1 的限制：只用一顆超音波和鏡頭，無法分辨。留給 V2 解決。']]
+},
+{
+  title: '階段 8　測試、調校與紀錄',
+  goal: '用同一套測試方法量化成果，找出要調整的參數，完成報告。',
+  funcs: ['固定測試場景', '記錄成功率與失敗原因', '調整參數並比較前後差異'],
+  steps: [
+    '準備固定場景：車子起點、目標物位置、2～3 個紙箱位置，用膠帶在地上標記。',
+    '執行 10 次，在下面的表格記錄：是否成功、花費時間、失敗原因。',
+    '挑出最常見的失敗原因，只調整一個參數（例如 AVOID_CM），再測 10 次比較。',
+    '把前後兩次的成功率與調整的理由寫進報告。'
+  ],
+  codes: [],
+  check: ['完成 10 次測試紀錄', '場地空曠（0～1 個障礙物）時成功率達到 70% 以上', '至少完成一次「調參數 → 重測 → 比較」並寫下原因'],
+  hints: [
+    '沒有數據就沒辦法知道有沒有變好。每次測試都要記錄，而且場景要一樣。',
+    '一次只改一個參數，不然不知道是哪個改動有效。',
+    '失敗原因可以先分三類：撞到障礙物、找不到目標、停錯位置。針對最多的那類去改。'
+  ],
+  ai: ['我的自走車測試 10 次成功 6 次，失敗的 4 次中有 3 次是撞到障礙物。請問我下一步該調整哪些參數？請列出 3 個建議，並說明每個建議的理由與可能的副作用。'],
+  trouble: [['每次結果都不同', '光線、電池電量、地面都會影響。固定測試時間，電池要充飽。']],
+  table: true
+}
+];
+
+/* ============ 產生手冊 ============ */
+(function renderManual(){
+  const root = document.getElementById('manual');
+  let total = 0;
+  const boxes = [];
+  const mk = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
+
+  STAGES.forEach((st, si) => {
+    const card = mk('div', 'stage');
+    card.id = 'st' + si;
+    card.appendChild(mk('h3', '', st.title));
+    card.appendChild(mk('p', '', '<b>目標：</b>' + st.goal));
+
+    card.appendChild(mk('h4', '', '這個階段需要的功能'));
+    card.appendChild(mk('ul', '', st.funcs.map(f => '<li>' + f + '</li>').join('')));
+
+    card.appendChild(mk('h4', '', '步驟'));
+    card.appendChild(mk('ol', '', st.steps.map(f => '<li>' + f + '</li>').join('')));
+
+    st.codes.forEach(c => {
+      const head = mk('div', 'codehead');
+      head.appendChild(mk('span', '', c.name));
+      const btn = mk('button', 'copy', '複製');
+      btn.type = 'button';
+      btn.addEventListener('click', () => {
+        const done = () => { btn.textContent = '已複製'; setTimeout(() => btn.textContent = '複製', 1500); };
+        if (navigator.clipboard) navigator.clipboard.writeText(c.code).then(done, () => {});
+      });
+      head.appendChild(btn);
+      const pre = mk('pre', 'code');
+      pre.textContent = c.code;
+      card.appendChild(head);
+      card.appendChild(pre);
+    });
+
+    if (st.table) {
+      let rows = '';
+      for (let i = 1; i <= 10; i++) rows += '<tr><td>' + i + '</td><td><input type="checkbox" class="keep" data-k="t' + i + '"></td><td><input type="text" class="keeptxt" data-k="tt' + i + '" placeholder="秒"></td><td><input type="text" class="keeptxt wide" data-k="tn' + i + '" placeholder="失敗原因（撞到／找不到／停錯位置）"></td></tr>';
+      card.appendChild(mk('h4', '', '測試紀錄表（資料只存在這台電腦的瀏覽器）'));
+      card.appendChild(mk('div', 'scroll', '<table><tr><th>次數</th><th>成功</th><th>時間</th><th>備註</th></tr>' + rows + '<tr><td colspan="4">成功次數：<b id="tSum">0</b> / 10</td></tr></table>'));
+    }
+
+    card.appendChild(mk('h4', '', '驗收（全部通過才進下一階段）'));
+    const ul = mk('ul', 'checks');
+    st.check.forEach((t, ci) => {
+      const key = 'ck-' + si + '-' + ci;
+      const li = mk('li');
+      const lab = mk('label');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = keepGet(key) === '1';
+      cb.addEventListener('change', () => { keepSet(key, cb.checked ? '1' : '0'); progress(); });
+      lab.appendChild(cb);
+      lab.insertAdjacentHTML('beforeend', ' ' + t);
+      li.appendChild(lab);
+      ul.appendChild(li);
+      boxes.push(cb);
+      total++;
+    });
+    card.appendChild(ul);
+
+    card.appendChild(mk('h4', '', '提示（卡住時依序打開）'));
+    const names = ['提示 1：方向', '提示 2：關鍵觀念', '提示 3：接近答案'];
+    st.hints.forEach((h, i) => {
+      const d = mk('details', 'hint');
+      d.appendChild(mk('summary', '', names[i]));
+      d.appendChild(mk('div', '', h));
+      card.appendChild(d);
+    });
+
+    card.appendChild(mk('h4', '', 'AI 提問範本（複製後補上你自己的狀況）'));
+    st.ai.forEach(t => {
+      const box = mk('div', 'aibox');
+      box.appendChild(mk('p', '', t));
+      const b = mk('button', 'copy', '複製提問');
+      b.type = 'button';
+      b.addEventListener('click', () => {
+        if (navigator.clipboard) navigator.clipboard.writeText(t).then(() => { b.textContent = '已複製'; setTimeout(() => b.textContent = '複製提問', 1500); }, () => {});
+      });
+      box.appendChild(b);
+      card.appendChild(box);
+    });
+
+    card.appendChild(mk('h4', '', '常見問題'));
+    card.appendChild(mk('table', '', '<tr><th style="width:36%">狀況</th><th>怎麼辦</th></tr>' + st.trouble.map(t => '<tr><td>' + t[0] + '</td><td>' + t[1] + '</td></tr>').join('')));
+    root.appendChild(card);
+  });
+
+  function progress(){
+    const n = boxes.filter(b => b.checked).length;
+    document.getElementById('progressText').textContent = n + ' / ' + total;
+    const bar = document.getElementById('progressBar');
+    bar.max = total; bar.value = n;
+  }
+  progress();
+
+  // 測試紀錄與總驗收：存在瀏覽器（失敗時照常運作）
+  function sum(){
+    const n = document.querySelectorAll('input.keep[data-k^="t"]:checked').length;
+    const s = document.getElementById('tSum'); if (s) s.textContent = n;
+  }
+  document.querySelectorAll('input.keep').forEach(el => {
+    el.checked = keepGet('kp-' + el.dataset.k) === '1';
+    el.addEventListener('change', () => { keepSet('kp-' + el.dataset.k, el.checked ? '1' : '0'); sum(); });
+  });
+  document.querySelectorAll('input.keeptxt').forEach(el => {
+    const v = keepGet('kp-' + el.dataset.k); if (v) el.value = v;
+    el.addEventListener('input', () => keepSet('kp-' + el.dataset.k, el.value));
+  });
+  sum();
+})();
+
+/* ============ 整車行為模擬 ============ */
+(function(){
+  const cv = document.getElementById('sim'), ctx = cv.getContext('2d');
+  const camCv = document.getElementById('cam'), cctx = camCv.getContext('2d');
+  const $ = id => document.getElementById(id);
+  const S = 2, W = 400, H = 260, R = 12;           // 1 公分 = 2 像素；車半徑 12 公分
+  const FOV = 60 * Math.PI / 180, MAXR = 200;
+  const CENTER_TOL = 0.15, SIDE_CM = 12, SPIN_SEC = 4;   // 原地轉一圈約 4 秒（車速 40 時）
+  const NAMES = { SEARCH: '搜尋', APPROACH: '接近目標', AVOID: '避障', ARRIVED: '到達停止' };
+  const CODE = {
+    SEARCH: 'main.py：最後的 else，原地旋轉（L）約一圈，再前進 2 秒',
+    APPROACH: 'main.py：elif found，依 offset 送 L / R / F',
+    AVOID: 'main.py：elif (c < AVOID_CM and not facing) or min(l, r) < SIDE_CM → avoid(l, r)',
+    ARRIVED: 'main.py：elif facing and c <= ARRIVE_CM → 停車、綠燈、嗶'
+  };
+  const walls = [{x:-30,y:-30,w:W+60,h:30},{x:-30,y:H,w:W+60,h:30},{x:-30,y:0,w:30,h:H},{x:W,y:0,w:30,h:H}];
+
+  let obs, target, robot, state, act, running = false, last = 0, acc = 0;
+  let trail, hits, inContact, simT, avoidT, avoidDir, searchT, sens, sensT, beepT, p;
+
+  function defaults(){
+    obs = [{x:140,y:20,w:24,h:80},{x:230,y:160,w:24,h:90},{x:290,y:30,w:50,h:30}];
+    target = {x:350,y:140,r:8};
+  }
+  function resetRobot(){
+    robot = {x:45,y:130,a:0};
+    state = 'SEARCH'; act = 'S'; trail = []; hits = 0; inContact = false;
+    simT = 0; avoidT = 0; avoidDir = 'L'; searchT = 0; sens = [400,400,400]; sensT = 0; beepT = 0;
+  }
+  function rayRect(ox,oy,dx,dy,r){
+    let tmin = 0, tmax = Infinity;
+    const sl = [[ox,dx,r.x,r.x+r.w],[oy,dy,r.y,r.y+r.h]];
+    for (const [o,d,lo,hi] of sl){
+      if (Math.abs(d) < 1e-9){ if (o < lo || o > hi) return Infinity; }
+      else {
+        let t1 = (lo-o)/d, t2 = (hi-o)/d; if (t1 > t2) [t1,t2] = [t2,t1];
+        tmin = Math.max(tmin,t1); tmax = Math.min(tmax,t2);
+        if (tmin > tmax) return Infinity;
+      }
+    }
+    return tmin > 0 ? tmin : Infinity;
+  }
+  function rayCircle(ox,oy,dx,dy,c){
+    const fx = ox-c.x, fy = oy-c.y, b = fx*dx+fy*dy, cc = fx*fx+fy*fy-c.r*c.r, disc = b*b-cc;
+    if (disc < 0) return Infinity;
+    const t = -b-Math.sqrt(disc); return t > 0 ? t : Infinity;
+  }
+  function origin(){ return [robot.x+Math.cos(robot.a)*R, robot.y+Math.sin(robot.a)*R]; }
+  function cast(rel){
+    const [ox,oy] = origin(), a = robot.a+rel, dx = Math.cos(a), dy = Math.sin(a);
+    let d = Infinity;
+    for (const r of obs.concat(walls)) d = Math.min(d, rayRect(ox,oy,dx,dy,r));
+    d = Math.min(d, rayCircle(ox,oy,dx,dy,target));
+    return d;
+  }
+  function readSensors(){
+    return [-30,0,30].map(deg => {
+      const d = cast(deg*Math.PI/180);
+      return d > MAXR ? 400 : Math.round(d + (Math.random()-0.5)*1.5);
+    });
+  }
+  function camera(){
+    const dx = target.x-robot.x, dy = target.y-robot.y, dist = Math.hypot(dx,dy);
+    let ang = Math.atan2(dy,dx)-robot.a;
+    while (ang > Math.PI) ang -= 2*Math.PI; while (ang < -Math.PI) ang += 2*Math.PI;
+    if (Math.abs(ang) > FOV/2 || dist > 250) return {found:false};
+    const ux = dx/dist, uy = dy/dist;
+    for (const r of obs){ if (rayRect(robot.x,robot.y,ux,uy,r) < dist-target.r) return {found:false}; }
+    return {found:true, offset:Math.max(-1,Math.min(1,ang/(FOV/2))), dist:dist-target.r-R};
+  }
+  function collides(x,y){
+    for (const r of obs.concat(walls)){
+      const cx = Math.max(r.x,Math.min(x,r.x+r.w)), cy = Math.max(r.y,Math.min(y,r.y+r.h));
+      if (Math.hypot(x-cx,y-cy) < R) return true;
+    }
+    return Math.hypot(x-target.x,y-target.y) < R+target.r;
+  }
+  function move(dt){
+    const v = +$('rSpeed').value, w = v/25;
+    if (act === 'L') robot.a -= w*dt;
+    else if (act === 'R') robot.a += w*dt;
+    else if (act === 'F' || act === 'B'){
+      const s = (act === 'F' ? 1 : -1)*v*dt, nx = robot.x+Math.cos(robot.a)*s, ny = robot.y+Math.sin(robot.a)*s;
+      if (collides(nx,ny)){ if (!inContact){ hits++; inContact = true; } }
+      else { robot.x = nx; robot.y = ny; inContact = false; }
+    }
+    if (act !== 'F' && act !== 'B') inContact = false;
+  }
+  function step(dt){
+    simT += dt; sensT += dt;
+    if (sensT >= 0.1){ sensT = 0; sens = readSensors(); }
+    const [l,c,r] = sens, cam = camera();
+    const avoidCm = +$('rAvoid').value, arriveCm = +$('rArrive').value;
+    p = cam;
+    const facing = cam.found && Math.abs(cam.offset) < CENTER_TOL;
+    if (state === 'ARRIVED'){ act = 'S'; }
+    else if (state === 'AVOID'){
+      avoidT += dt;
+      if (avoidT < 0.2) act = 'S'; else if (avoidT < 0.7) act = 'B'; else if (avoidT < 1.3) act = avoidDir;
+      else { state = 'SEARCH'; searchT = 0; act = 'S'; }
+    }
+    else if (facing && c <= arriveCm){ state = 'ARRIVED'; act = 'S'; beepT = 1.2; }
+    else if ((c < avoidCm && !facing) || Math.min(l,r) < SIDE_CM){ state = 'AVOID'; avoidT = 0; avoidDir = l > r ? 'L' : 'R'; act = 'S'; }
+    else if (cam.found){
+      state = 'APPROACH';
+      act = cam.offset < -CENTER_TOL ? 'L' : cam.offset > CENTER_TOL ? 'R' : 'F';
+    }
+    else {
+      if (state !== 'SEARCH') searchT = 0;
+      state = 'SEARCH'; searchT += dt;
+      act = (searchT % (SPIN_SEC + 2)) < SPIN_SEC ? 'L' : 'F';
+    }
+    move(dt);
+    if (beepT > 0) beepT -= dt;
+    if (act === 'F' || act === 'B'){
+      const lt = trail[trail.length-1];
+      if (!lt || Math.hypot(lt[0]-robot.x, lt[1]-robot.y) > 3) trail.push([robot.x, robot.y]);
+    }
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,cv.width,cv.height);
+    ctx.fillStyle = '#f4f2ea'; ctx.fillRect(0,0,cv.width,cv.height);
+    ctx.strokeStyle = '#e1ddd0'; ctx.lineWidth = 1;
+    for (let x = 0; x <= W; x += 50){ ctx.beginPath(); ctx.moveTo(x*S,0); ctx.lineTo(x*S,H*S); ctx.stroke(); }
+    for (let y = 0; y <= H; y += 50){ ctx.beginPath(); ctx.moveTo(0,y*S); ctx.lineTo(W*S,y*S); ctx.stroke(); }
+    ctx.fillStyle = '#9a9a9a';
+    obs.forEach(r => ctx.fillRect(r.x*S, r.y*S, r.w*S, r.h*S));
+    if ($('cTrail').checked && trail.length > 1){
+      ctx.strokeStyle = 'rgba(47,111,176,.5)'; ctx.lineWidth = 2; ctx.beginPath();
+      trail.forEach((t,i) => i ? ctx.lineTo(t[0]*S,t[1]*S) : ctx.moveTo(t[0]*S,t[1]*S)); ctx.stroke();
+    }
+    ctx.fillStyle = '#d33'; ctx.beginPath(); ctx.arc(target.x*S, target.y*S, target.r*S, 0, 7); ctx.fill();
+    ctx.fillStyle = '#222'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('目標', target.x*S, target.y*S-target.r*S-5);
+
+    if ($('cFov').checked){
+      ctx.fillStyle = 'rgba(106,168,224,.15)'; ctx.beginPath(); ctx.moveTo(robot.x*S, robot.y*S);
+      ctx.arc(robot.x*S, robot.y*S, 220*S/1.4, robot.a-FOV/2, robot.a+FOV/2); ctx.closePath(); ctx.fill();
+    }
+    if ($('cRays').checked){
+      const [ox,oy] = origin(), avoidCm = +$('rAvoid').value;
+      [-30,0,30].forEach((deg,i) => {
+        const a = robot.a+deg*Math.PI/180, d = Math.min(cast(deg*Math.PI/180), 150);
+        ctx.strokeStyle = (sens[i] < avoidCm ? '#d33' : '#2f6fb0'); ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(ox*S, oy*S); ctx.lineTo((ox+Math.cos(a)*d)*S, (oy+Math.sin(a)*d)*S); ctx.stroke();
+      });
+    }
+    ctx.save(); ctx.translate(robot.x*S, robot.y*S); ctx.rotate(robot.a);
+    ctx.fillStyle = '#222'; ctx.fillRect(-9*S, -13*S, 18*S, 5*S); ctx.fillRect(-9*S, 8*S, 18*S, 5*S);
+    ctx.fillStyle = '#e9e6dc'; ctx.strokeStyle = '#7a7466'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(-12*S, -9*S, 24*S, 18*S, 4*S); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#2e8b57'; ctx.fillRect(-7*S, -5*S, 10*S, 10*S);
+    ctx.fillStyle = '#2f6fb0'; ctx.fillRect(10*S, -9*S, 3*S, 4*S); ctx.fillRect(10*S, -2*S, 3*S, 4*S); ctx.fillRect(10*S, 5*S, 3*S, 4*S);
+    ctx.fillStyle = '#6aa8e0'; ctx.beginPath(); ctx.arc(5*S, 0, 2.5*S, 0, 7); ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = '#7a7466'; ctx.lineWidth = 3; ctx.strokeRect(0,0,W*S,H*S);
+
+    cctx.fillStyle = '#20252b'; cctx.fillRect(0,0,640,150);
+    cctx.strokeStyle = 'rgba(255,255,255,.2)'; cctx.lineWidth = 1;
+    [640/3, 1280/3].forEach(x => { cctx.beginPath(); cctx.moveTo(x,0); cctx.lineTo(x,150); cctx.stroke(); });
+    cctx.fillStyle = 'rgba(255,255,255,.5)'; cctx.font = '13px sans-serif'; cctx.textAlign = 'center';
+    cctx.fillText('左', 107, 16); cctx.fillText('中', 320, 16); cctx.fillText('右', 533, 16);
+    if (p && p.found){
+      const cx = (p.offset+1)/2*640, bw = Math.min(300, 2200/Math.max(p.dist+R,15));
+      cctx.fillStyle = '#d33'; cctx.fillRect(cx-bw/2, 75-bw/2, bw, bw);
+      cctx.strokeStyle = '#3c3'; cctx.lineWidth = 2; cctx.strokeRect(cx-bw/2-3, 75-bw/2-3, bw+6, bw+6);
+      cctx.fillStyle = '#3c3'; cctx.textAlign = 'left';
+      cctx.fillText('offset=' + p.offset.toFixed(2) + '  距離≈' + Math.round(p.dist) + 'cm', 8, 142);
+    } else { cctx.fillStyle = '#aaa'; cctx.textAlign = 'center'; cctx.fillText('沒有看到目標', 320, 80); }
+
+    $('vState').textContent = NAMES[state];
+    $('vDist').textContent = sens.map(v => v === 400 ? '無回波' : v + ' cm').join(' ／ ');
+    $('vCam').textContent = p && p.found ? '看到，偏移 ' + p.offset.toFixed(2) : '沒看到';
+    $('vAct').textContent = act;
+    $('vHit').textContent = hits;
+    $('vTime').textContent = simT.toFixed(1) + ' 秒';
+    $('vCode').textContent = '對應程式：' + CODE[state];
+    $('ledR').className = 'led' + (state === 'AVOID' ? ' onR' : '');
+    $('ledG').className = 'led' + ((p && p.found) || state === 'ARRIVED' ? ' onG' : '');
+    $('buzz').className = 'buzz' + (beepT > 0 ? ' on' : '');
+  }
+
+  function loop(ts){
+    if (!last) last = ts;
+    let dt = Math.min(0.05, (ts-last)/1000); last = ts;
+    if (running){
+      acc += dt*(+$('rRate').value);
+      while (acc >= 1/60){ step(1/60); acc -= 1/60; }
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  function randomMap(){
+    const out = [];
+    for (let n = 0, tries = 0; n < 5 && tries < 200; tries++){
+      const w = 25+Math.random()*40, h = 25+Math.random()*40, x = 80+Math.random()*(W-100-w), y = 10+Math.random()*(H-20-h);
+      if (x < 100 && Math.abs(y-130) < 60) continue;
+      out.push({x,y,w,h}); n++;
+    }
+    obs = out;
+    for (let t = 0; t < 200; t++){
+      const x = 200+Math.random()*180, y = 20+Math.random()*220;
+      if (!obs.some(r => x > r.x-25 && x < r.x+r.w+25 && y > r.y-25 && y < r.y+r.h+25)){ target = {x,y,r:8}; break; }
+    }
+    resetRobot();
+  }
+
+  cv.addEventListener('click', e => {
+    const b = cv.getBoundingClientRect(), x = (e.clientX-b.left)/b.width*W, y = (e.clientY-b.top)/b.height*H;
+    const mode = document.querySelector('input[name=mode]:checked').value;
+    if (mode === 'target'){ if (!obs.some(r => x > r.x-10 && x < r.x+r.w+10 && y > r.y-10 && y < r.y+r.h+10)) target = {x,y,r:8}; }
+    else if (mode === 'add'){
+      const r = {x:x-20,y:y-20,w:40,h:40};
+      if (Math.hypot(x-robot.x, y-robot.y) > R+30 && Math.hypot(x-target.x, y-target.y) > 30) obs.push(r);
+    } else obs = obs.filter(r => !(x >= r.x && x <= r.x+r.w && y >= r.y && y <= r.y+r.h));
+  });
+  $('btnRun').addEventListener('click', () => { running = !running; $('btnRun').textContent = running ? '⏸ 暫停' : '▶ 繼續'; });
+  $('btnReset').addEventListener('click', () => { resetRobot(); });
+  $('btnRandom').addEventListener('click', randomMap);
+  $('btnDefault').addEventListener('click', () => { defaults(); resetRobot(); });
+  [['rSpeed','oSpeed'],['rAvoid','oAvoid'],['rArrive','oArrive'],['rRate','oRate']].forEach(([a,b]) => {
+    $(a).addEventListener('input', () => $(b).textContent = $(a).value);
+  });
+  defaults(); resetRobot(); p = {found:false};
+  requestAnimationFrame(loop);
+})();
+
+/* ============ 超音波測距動畫 ============ */
+(function(){
+  const cv = document.getElementById('sonar'), ctx = cv.getContext('2d');
+  const sl = document.getElementById('rSd'), out = document.getElementById('oSd'), txt = document.getElementById('sonarText');
+  sl.addEventListener('input', () => out.textContent = sl.value);
+  function draw(ts){
+    const d = +sl.value, X0 = 90, X1 = 90 + (d/200)*620, T = 3000, ph = (ts % T)/T;
+    ctx.clearRect(0,0,800,170); ctx.fillStyle = '#fafaf7'; ctx.fillRect(0,0,800,170);
+    ctx.strokeStyle = '#ccc'; ctx.beginPath(); ctx.moveTo(X0,140); ctx.lineTo(710,140); ctx.stroke();
+    ctx.fillStyle = '#888'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
+    for (let m = 0; m <= 200; m += 50){ const x = X0 + m/200*620; ctx.fillRect(x,136,1,8); ctx.fillText(m + ' cm', x, 158); }
+    ctx.fillStyle = '#2f6fb0'; ctx.fillRect(30,55,40,50);
+    ctx.fillStyle = '#cfe3f5'; ctx.beginPath(); ctx.arc(45,80,8,0,7); ctx.arc(60,80,8,0,7); ctx.fill();
+    ctx.fillStyle = '#2f6fb0'; ctx.textAlign = 'center'; ctx.fillText('HC-SR04', 50, 48);
+    ctx.fillStyle = '#9a9a9a'; ctx.fillRect(X1,45,24,70);
+    ctx.fillStyle = '#555'; ctx.fillText('障礙物', X1+12, 38);
+    const go = ph < 0.5, f = go ? ph/0.5 : (ph-0.5)/0.5, x = go ? X0 + (X1-X0)*f : X1 - (X1-X0)*f;
+    ctx.strokeStyle = go ? '#2f6fb0' : '#d9822b'; ctx.lineWidth = 2;
+    for (let k = 0; k < 3; k++){
+      const xx = go ? x - k*14 : x + k*14;
+      if (xx < X0 || xx > X1) continue;
+      ctx.globalAlpha = 1 - k*0.3; ctx.beginPath(); ctx.arc(xx, 80, 22, -1.0, 1.0, false);
+      if (!go){ ctx.stroke(); ctx.beginPath(); ctx.arc(xx, 80, 22, Math.PI-1.0, Math.PI+1.0, false); }
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1; ctx.fillStyle = go ? '#2f6fb0' : '#d9822b'; ctx.textAlign = 'center';
+    ctx.fillText(go ? '① 發出聲波（Trig）' : '② 聲波反彈回來（Echo）', 400, 20);
+    const t = d/100 * 2 / 343 * 1e6;                       // 微秒
+    txt.innerHTML = '聲音來回的時間 t ＝ 2 × ' + (d/100).toFixed(2) + ' 公尺 ÷ 343 公尺/秒 ＝ <b>' + Math.round(t) + ' 微秒</b>（Arduino 的 <code>pulseIn</code> 量到的值）<br>距離 ＝ t × 0.034 ÷ 2 ＝ ' + Math.round(t) + ' × 0.034 ÷ 2 ≈ <b>' + (t*0.034/2).toFixed(1) + ' 公分</b>（動畫已放慢，實際只有幾毫秒）';
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+})();
+</script>
 </body>
 </html>
