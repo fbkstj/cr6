@@ -5,12 +5,37 @@
 只用標準函式庫，不需安裝套件。
 """
 import html
+import json
 import re
 from pathlib import Path
 
 HERE = Path(__file__).parent
 SRC = HERE / "data" / "digest.md"
 OUT = HERE / "index.html"
+PRICES = HERE / "data" / "prices"
+NAMES = {"6213": "聯茂"}  # 下拉選單顯示用，找不到就只顯示代號
+
+
+def load_prices():
+    data = {}
+    for f in sorted(PRICES.glob("*.json")):
+        data[f.stem] = json.loads(f.read_text(encoding="utf-8"))
+    return data
+
+
+KLINE_HTML = """
+<div id="kline">
+  <div class="kbar">
+    <select id="kcode" aria-label="股票"></select>
+    <select id="kdays" aria-label="區間"><option value="60">近 60 日</option><option value="120" selected>近 120 日</option><option value="9999">全部</option></select>
+    <span id="kinfo" class="muted">滑鼠移到圖上看當日數字</span>
+  </div>
+  <div class="klegend"><i style="background:#f59e0b"></i>MA5 <i style="background:#3b82f6"></i>MA20 <i style="background:#a855f7"></i>MA60 <span class="muted">紅 K 收高於開、綠 K 收低於開；下方為成交量（張）</span></div>
+  <div id="kchart"></div>
+  <details><summary>看最近 20 個交易日數據</summary><div class="tablewrap" id="ktable"></div></details>
+  <p class="note" id="knote"></p>
+</div>
+"""
 
 
 def inline(text):
@@ -137,6 +162,11 @@ def render(blocks):
             i += 1
         elif kind == "h2":
             start(p)
+        elif kind == "p" and p.startswith("K 線圖"):
+            start("K 線圖")
+            out.append(KLINE_HTML)
+            while i + 1 < len(blocks) and not (blocks[i + 1][0] == "p" and blocks[i + 1][1].startswith("總覽表")):
+                i += 1  # 略過原稿裡沒有資料的 K 線區塊
         elif kind == "p":
             short = len(p) <= 40 and not p.endswith(("。", ";"))
             if short and nxt == "ol":
@@ -205,6 +235,12 @@ th.asc::after{content:" ▲"}th.desc::after{content:" ▼"}
 tr:hover td{background:var(--acbg)}
 mark{background:#ffe08a;color:#000;border-radius:3px}
 .hide{display:none!important}
+.kbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0}
+.kbar select{padding:6px 8px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit}
+#kinfo{font-variant-numeric:tabular-nums}
+.klegend{font-size:12.5px;margin:4px 0}.klegend i{display:inline-block;width:14px;height:3px;margin:0 4px 3px 10px;vertical-align:middle}
+#kchart svg{width:100%;height:auto;display:block;touch-action:pan-y}
+#kchart .empty{padding:28px 8px;color:var(--mut);text-align:center;border:1px dashed var(--bd);border-radius:10px}
 @media (max-width:820px){.layout{grid-template-columns:1fr}nav.toc{display:none}section{padding:6px 12px 12px}}
 """
 
@@ -238,6 +274,52 @@ q.addEventListener('input',()=>{
   $$('details.grp').forEach(d=>{const any=$$('li:not(.hide)',d).length>0;d.classList.toggle('hide',!any);d.open=any});
   $$('section').forEach(sc=>sc.classList.toggle('hide',!$('mark',sc)&&!re.test($('h2',sc).textContent)));
 });
+// K 線圖：SVG 自繪，紅漲綠跌（台股慣例），MA5/20/60 與成交量
+const PRICES=__PRICES__,NAMES=__NAMES__;
+(function(){
+  const box=$('#kchart');if(!box)return;
+  const codes=Object.keys(PRICES),sel=$('#kcode'),dsel=$('#kdays');
+  if(!codes.length){box.innerHTML='<div class="empty">尚未載入股價資料。請在自己的電腦執行 <code>python3 stock-news/fetch_prices.py 6213</code>，再重新執行 <code>build.py</code>。</div>';sel.hidden=dsel.hidden=true;return}
+  sel.innerHTML=codes.map(c=>`<option value="${c}">${c} ${NAMES[c]||''}</option>`).join('');
+  const ma=(a,n)=>a.map((_,i)=>i<n-1?null:a.slice(i-n+1,i+1).reduce((s,x)=>s+x.c,0)/n);
+  const f=(x,d=2)=>x==null?'—':x.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
+  const fv=x=>x.toLocaleString('en-US');
+  function draw(){
+    const all=PRICES[sel.value],m5=ma(all,5),m20=ma(all,20),m60=ma(all,60);
+    const n=Math.min(+dsel.value,all.length),off=all.length-n,rows=all.slice(off);
+    const W=900,H=420,L=52,R=10,T=10,PH=290,VT=T+PH+14,VH=H-VT-18,cw=(W-L-R)/n,bw=Math.max(1,cw*0.65);
+    const hi=Math.max(...rows.map(r=>r.h)),lo=Math.min(...rows.map(r=>r.l)),pad=(hi-lo)*0.05||1;
+    const y=p=>T+PH*(1-(p-(lo-pad))/((hi+pad)-(lo-pad))),vmax=Math.max(...rows.map(r=>r.v))||1;
+    const x=i=>L+cw*(i+0.5),up=getComputedStyle(document.documentElement).getPropertyValue("--up").trim(),dn=getComputedStyle(document.documentElement).getPropertyValue("--dn").trim();
+    let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${sel.value} K 線圖">`;
+    for(let k=0;k<=4;k++){const p=lo-pad+((hi+pad)-(lo-pad))*k/4,yy=y(p);
+      s+=`<line x1="${L}" x2="${W-R}" y1="${yy}" y2="${yy}" stroke="currentColor" opacity=".12"/><text x="${L-6}" y="${yy+4}" text-anchor="end" font-size="11" fill="currentColor" opacity=".6">${f(p,p>=100?0:1)}</text>`}
+    const step=Math.ceil(n/8);
+    rows.forEach((r,i)=>{
+      if(i%step===0)s+=`<text x="${x(i)}" y="${H-4}" text-anchor="middle" font-size="11" fill="currentColor" opacity=".6">${r.d.slice(5)}</text>`;
+      const c=r.c>=r.o?up:dn;
+      s+=`<line x1="${x(i)}" x2="${x(i)}" y1="${y(r.h)}" y2="${y(r.l)}" stroke="${c}"/><rect x="${x(i)-bw/2}" y="${Math.min(y(r.o),y(r.c))}" width="${bw}" height="${Math.max(1,Math.abs(y(r.o)-y(r.c)))}" fill="${c}"/>`;
+      s+=`<rect x="${x(i)-bw/2}" y="${VT+VH*(1-r.v/vmax)}" width="${bw}" height="${VH*r.v/vmax}" fill="${c}" opacity=".55"/>`});
+    [[m5,'#f59e0b'],[m20,'#3b82f6'],[m60,'#a855f7']].forEach(([a,col])=>{
+      const d=rows.map((_,i)=>a[off+i]==null?null:`${x(i)},${y(a[off+i])}`).filter(Boolean).join(' ');
+      if(d)s+=`<polyline points="${d}" fill="none" stroke="${col}" stroke-width="1.4"/>`});
+    s+=`<line id="kx" y1="${T}" y2="${VT+VH}" stroke="currentColor" opacity=".4" visibility="hidden"/><rect id="khit" x="${L}" y="${T}" width="${W-L-R}" height="${H-T}" fill="transparent"/></svg>`;
+    box.innerHTML=s;
+    const svg=$('svg',box),line=$('#kx',box),info=$('#kinfo');
+    const show=e=>{const b=svg.getBoundingClientRect(),px=((e.touches?e.touches[0].clientX:e.clientX)-b.left)/b.width*W;
+      const i=Math.max(0,Math.min(n-1,Math.floor((px-L)/cw))),r=rows[i],pr=all[off+i-1];
+      line.setAttribute('x1',x(i));line.setAttribute('x2',x(i));line.setAttribute('visibility','visible');
+      const chg=pr?r.c-pr.c:null;
+      info.textContent=`${r.d}　開 ${f(r.o)}　高 ${f(r.h)}　低 ${f(r.l)}　收 ${f(r.c)}${chg==null?'':`（${chg>=0?'+':''}${f(chg)}）`}　量 ${fv(r.v)} 張`};
+    svg.addEventListener('mousemove',show);svg.addEventListener('touchmove',show,{passive:true});
+    // 近 20 日表格
+    const last=all.slice(-20).map((r,k,a)=>({r,pr:all[all.length-20+k-1],m:m20[all.length-20+k]})).reverse();
+    $('#ktable').innerHTML='<table><thead><tr><th>日期</th><th>開</th><th>高</th><th>低</th><th>收</th><th>漲跌</th><th>量(張)</th><th>MA20</th></tr></thead><tbody>'+
+      last.map(({r,pr,m})=>{const ch=pr?r.c-pr.c:null;return `<tr><td>${r.d}</td><td>${f(r.o)}</td><td>${f(r.h)}</td><td>${f(r.l)}</td><td>${f(r.c)}</td><td style="color:${ch>=0?up:dn}">${ch==null?'—':(ch>=0?'+':'')+f(ch)}</td><td>${fv(r.v)}</td><td>${f(m)}</td></tr>`}).join('')+'</tbody></table>';
+    $('#knote').textContent=`資料來源：臺灣證券交易所個股日成交資訊，統計到 ${all[all.length-1].d}。均線用收盤價計算，沒有做除權息還原。`;
+  }
+  sel.onchange=dsel.onchange=draw;draw();
+})();
 // 深色模式切換
 const root=document.documentElement;
 $('#theme').addEventListener('click',()=>{
@@ -253,6 +335,7 @@ $('#toggle').addEventListener('click',e=>{
 def main():
     md = SRC.read_text(encoding="utf-8")
     body, nav = render(convert(md))
+    prices = load_prices()
     toc = "".join(f'<a href="#{sid}">{inline(t)[:22]}</a>' for sid, t in nav)
     page = f"""<!DOCTYPE html>
 <html lang="zh-Hant">
@@ -275,7 +358,7 @@ def main():
 {body}
 </main>
 </div>
-<script>{JS}</script>
+<script>{JS.replace("__PRICES__", json.dumps(prices, ensure_ascii=False, separators=(",", ":"))).replace("__NAMES__", json.dumps(NAMES, ensure_ascii=False))}</script>
 </body>
 </html>
 """
