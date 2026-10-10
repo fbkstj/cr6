@@ -97,7 +97,7 @@
     <span class="small">&nbsp;紅 K 收高於開、綠 K 收低於開;下方為成交量(張)</span>
   </div>
   <div class="kwrap"><canvas id="kline"></canvas><div id="ktip"></div></div>
-  <div class="note">⚠ 目前圖上是「示意資料」(隨機產生,僅供確認版面)。要顯示真實行情,把 <code>KLINE_DATA</code> 換成臺灣證券交易所個股日成交資訊(日期、開、高、低、收、量)即可。</div>
+  <div class="note" id="kNote">⚠ 目前圖上是「示意資料」(隨機產生,僅供確認版面)。執行 <code>python3 scripts/fetch_twse_kline.py 6213</code> 產生 <code>kline-data.js</code> 後重新整理,就會換成證交所真實行情。</div>
   <details>
     <summary>看最近 20 個交易日數據</summary>
     <div class="body scroll">
@@ -150,6 +150,7 @@
 
 </main>
 
+<script src="kline-data.js"></script>
 <script>
 /* ============ 資料區:之後只要改這裡 ============ */
 const DAYS = [
@@ -336,7 +337,9 @@ function demoKline() {
   }
   return out;
 }
-const KLINE_DATA = demoKline();
+const REAL = window.KLINE_REAL;
+const KLINE_DATA = REAL ? REAL.rows : demoKline();
+if (REAL) { $("#kNote").innerHTML = `資料來源:臺灣證券交易所個股日成交資訊,統計到 ${REAL.rows[REAL.rows.length - 1][6]}。均線用收盤價計算,沒有做除權息還原。`; }
 
 /* ============ 畫面邏輯 ============ */
 const $ = s => document.querySelector(s);
