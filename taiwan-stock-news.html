@@ -339,7 +339,7 @@ function demoKline() {
 }
 const REAL = window.KLINE_REAL;
 const KLINE_DATA = REAL ? REAL.rows : demoKline();
-if (REAL) { $("#kNote").innerHTML = `資料來源:臺灣證券交易所個股日成交資訊,統計到 ${REAL.rows[REAL.rows.length - 1][6]}。均線用收盤價計算,沒有做除權息還原。`; }
+if (REAL) { document.querySelector("#kNote").innerHTML = `資料來源:臺灣證券交易所個股日成交資訊,統計到 ${REAL.rows[REAL.rows.length - 1][6]}。均線用收盤價計算,沒有做除權息還原。`; }
 
 /* ============ 畫面邏輯 ============ */
 const $ = s => document.querySelector(s);
