@@ -196,7 +196,7 @@
   .footer b { display: block; color: #e2e8f0; margin-bottom: 6px; }
 
   @media (max-width: 900px) {
-    .hero, .grid-2, .steps, .derive, .calc-grid { grid-template-columns: 1fr; }
+    .hero, .grid-2, .steps, .derive, .calc-grid { grid-template-columns: 1fr !important; }
     .hero { padding: 1.75rem 1.25rem; }
     .calc, .box { padding: 1.4rem; }
     .logo span { display: none; }
@@ -236,6 +236,7 @@
     </a>
     <ul class="nav">
       <li><a href="#circuits">電路對照</a></li>
+      <li><a href="#qpoint">Q 點驗算</a></li>
       <li><a href="#workflow">化簡三步驟</a></li>
       <li><a href="#calculation">雙推導過程</a></li>
       <li><a href="#calculator">增益計算機</a></li>
@@ -288,7 +289,7 @@
             <!-- RB1 / RB2 分壓 -->
             <path class="w" d="M220 50V90M220 160V240"/>
             <use href="#resV" x="220" y="90"/>
-            <text class="lbl" x="240" y="130">R<tspan class="sub" dy="4">B1</tspan><tspan dy="-4"> = 68 kΩ</tspan></text>
+            <text class="lbl" x="240" y="130">R<tspan class="sub" dy="4">B1</tspan><tspan dy="-4"> = 48 kΩ</tspan></text>
             <path class="w" d="M220 240V290M220 360V450"/>
             <use href="#resV" x="220" y="290"/>
             <text class="lbl" x="240" y="330">R<tspan class="sub" dy="4">B2</tspan><tspan dy="-4"> = 12 kΩ</tspan></text>
@@ -354,7 +355,7 @@
           <figcaption>標準符號：鋸齒電阻、平行板電容（+ 為極性端）、NPN 電晶體（射極箭頭向外）。</figcaption>
         </figure>
         <ul class="points">
-          <li>🔌 <span><strong>分壓偏壓：</strong>$R_{B1} = 68\text{ k}\Omega$ 與 $R_{B2} = 12\text{ k}\Omega$ 建立靜態工作點 (Q 點)。</span></li>
+          <li>🔌 <span><strong>分壓偏壓：</strong>$R_{B1} = 48\text{ k}\Omega$ 與 $R_{B2} = 12\text{ k}\Omega$ 分壓，建立 $I_{EQ} \approx 2.1\text{ mA}$ 的靜態工作點 (Q 點)，使 $r_\pi \approx 1.2\text{ k}\Omega$。</span></li>
           <li>⚡ <span><strong>射極電阻與旁路電容：</strong>$R_E = 1\text{ k}\Omega$ 穩定直流工作點，並聯 $C_E = 100\,\mu\text{F}$ 讓交流直接通地。</span></li>
           <li>🔄 <span><strong>交連電容：</strong>輸入端 $C_1$ 與輸出端 $C_2$ 阻隔直流，只讓交流訊號通過。</span></li>
         </ul>
@@ -421,6 +422,21 @@
           <li>📉 <span><strong>集極交流負載：</strong>$V_{CC}$ 交流接地，使 $R_C = 3\text{ k}\Omega$ 下端直接接地。</span></li>
         </ul>
       </article>
+    </div>
+  </section>
+
+
+  <!-- 1b. Q 點驗算 -->
+  <section id="qpoint">
+    <div class="box">
+      <h3 class="sec-title" style="margin-bottom:.4rem"><span>先算直流：由偏壓電阻推出 r<sub>π</sub> = 1.2 kΩ</span></h3>
+      <p class="lead" style="margin-bottom:0">假設 $V_{BE} = 0.7\text{ V}$、$V_T = 25\text{ mV}$、$\beta = 100$。小訊號參數 $r_\pi$ 不是憑空給的，而是由圖 A 的直流 Q 點決定。</p>
+      <div class="steps" style="grid-template-columns:repeat(4,1fr)">
+        <div class="step"><h4>戴維寧等效</h4><p>$V_{BB} = 15 \times \frac{12}{48+12} = 3\text{ V}$<br>$R_{BB} = 48 \parallel 12 = 9.6\text{ k}\Omega$</p></div>
+        <div class="step"><h4>射極電流</h4><p>$I_{EQ} = \frac{V_{BB} - V_{BE}}{R_E + R_{BB}/(\beta+1)} = \frac{2.3}{1\text{k} + 95\,\Omega} \approx 2.10\text{ mA}$</p></div>
+        <div class="step"><h4>小訊號參數</h4><p>$r_e = \frac{V_T}{I_{EQ}} \approx 11.9\,\Omega$<br>$r_\pi = (\beta+1)\,r_e \approx \mathbf{1.2\text{ k}\Omega}$</p></div>
+        <div class="step"><h4>確認在主動區</h4><p>$I_{CQ} \approx 2.08\text{ mA}$，$V_C = 15 - 2.08 \times 3 \approx 8.76\text{ V}$，$V_{CEQ} \approx 6.66\text{ V}$ &gt; 0.2 V，電晶體工作在主動區 ✓</p></div>
+      </div>
     </div>
   </section>
 
