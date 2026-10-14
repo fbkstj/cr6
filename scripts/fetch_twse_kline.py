@@ -23,11 +23,29 @@ def month_starts(n):
         t = (t - datetime.timedelta(days=1)).replace(day=1)
     return out[::-1]
 
+# 證交所 WAF 會把缺少 Accept 或 UA 太簡短(如 "Mozilla/5.0")的請求以 307(無 Location,
+# 內容為「因為安全性考量,您所執行的頁面無法呈現」)擋掉,所以要帶瀏覽器等級的標頭。
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
+    "Referer": "https://www.twse.com.tw/zh/trading/historical/stock-day.html",
+}
+
+def fetch(url, tries=4):
+    for i in range(tries):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=HEADERS), timeout=30) as r:
+                return json.load(r)
+        except Exception as e:  # 307 被擋、連線重置等,退避後重試
+            if i == tries - 1:
+                raise
+            print(f"重試 ({e})", file=sys.stderr)
+            time.sleep(5 * (i + 1))
+
 rows, name = [], ""
 for m in month_starts(months):
-    req = urllib.request.Request(URL.format(d=m.strftime("%Y%m%d"), c=code), headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        j = json.load(r)
+    j = fetch(URL.format(d=m.strftime("%Y%m%d"), c=code))
     if j.get("stat") != "OK":
         print(f"{m:%Y-%m}: {j.get('stat')}", file=sys.stderr)
     else:
