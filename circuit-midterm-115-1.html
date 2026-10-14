@@ -72,7 +72,20 @@ sub,sup{line-height:0}
 .sub{font-size:11.5px}
 #ah path{fill:var(--brand)}
 @media (max-width:640px){.eq{white-space:normal;overflow-wrap:anywhere}article.q,section.card{padding:14px 14px}}
-@media print{body{background:#fff}.bar,header.top p{display:none}article.q{break-inside:avoid;border-color:#ccc}header.top{background:#fff;color:#000;padding:0}header.top h1{color:#000}}
+@media print{
+body{background:#fff;font-size:12px;line-height:1.6}
+.bar,header.top p{display:none}
+header.top{background:#fff;color:#000;padding:0 0 4px}header.top h1{color:#000;font-size:17px}
+section.card,article.q{break-inside:avoid;border-color:#bbb;padding:8px 11px;margin-top:8px;border-radius:8px}
+article.q header{margin-bottom:3px}.stem{font-size:12.5px}.no,.qn{font-size:12px;min-width:26px}.ans{font-size:11px;padding:0 8px}
+h2{font-size:14px}
+.grid{grid-template-columns:repeat(11,1fr);gap:3px}.grid a{padding:0 5px;font-size:11px}
+figure.fg{max-width:330px;margin:5px 0;padding:3px}figure.fg figcaption{font-size:10.5px}
+ol.opts{grid-template-columns:1fr 1fr;gap:3px 8px;margin:5px 0}ol.opts li{padding:2px 7px;border-radius:6px}
+.sol{margin-top:5px;padding-top:4px}.sol h4{font-size:12px;margin-bottom:1px}.sol p{margin:3px 0}.sol ul{margin:3px 0 3px 1.1em}
+.eq{padding:2px 8px;margin:3px 0;font-size:12px;white-space:normal}ul.why li{padding:1px 7px;margin:2px 0}
+.note,.small{font-size:10.5px}footer{padding:8px 0!important}
+}
 </style>
 </head>
 <body>
