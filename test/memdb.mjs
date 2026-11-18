@@ -6,7 +6,7 @@ const hashPw = pw => { const salt = crypto.randomBytes(8).toString('hex'); retur
 const verifyPw = (pw, h) => { if (!h) return false; const [salt, hex] = h.split(':'); return crypto.timingSafeEqual(Buffer.from(hex, 'hex'), crypto.scryptSync(pw, salt, 32)); };
 
 export function createMemDb() {
-  const t = { competitions: [], accounts: [], judge_slots: [], login_fails: [], admin_logs: [], publications: [] };
+  const t = { competitions: [], accounts: [], judge_slots: [], teams: [], video_versions: [], login_fails: [], admin_logs: [], publications: [] };
   const clone = v => (v === undefined ? undefined : structuredClone(v));
   const strip = a => { if (!a) return null; const { password_hash, ...rest } = a; return Object.assign(clone(rest), { has_password: !!password_hash }); };
   let logId = 0;
@@ -40,6 +40,18 @@ export function createMemDb() {
 
     listJudgeSlots: async cid => clone(t.judge_slots.filter(s => s.competition_id === cid)),
 
+    listTeams: async cid => clone(t.teams.filter(x => x.competition_id === cid)),
+    listVersions: async cid => clone(t.video_versions.filter(v => v.competition_id === cid)),
+    insertVersion: async row => {
+      // 和資料庫相同的唯一約束
+      if (t.video_versions.some(v => v.competition_id === row.competition_id && v.source_sha256 === row.source_sha256)) throw new Error('duplicate sha256');
+      if (t.video_versions.some(v => v.team_id === row.team_id && v.version_no === row.version_no)) throw new Error('duplicate version');
+      if (row.check_ok && !row.playback_path) throw new Error('check_ok without playback');
+      const r = Object.assign({ id: crypto.randomUUID(), created_at: new Date().toISOString() }, clone(row));
+      t.video_versions.push(r);
+      return clone(r);
+    },
+
     getLoginFail: async key => clone(t.login_fails.find(f => f.key === key) || null),
     setLoginFail: async (key, count, until) => {
       const f = t.login_fails.find(x => x.key === key);
@@ -63,6 +75,9 @@ export function createMemDb() {
       const a = await db.insertAccount({ competition_id: cid, login_id: 'judge0' + i, display_name: '測試評審' + i, role: 'judge', active: true });
       await db.setPassword('judge0' + i, 'judge-pass-0' + i);
       if (i <= judgeCount) t.judge_slots.push({ competition_id: cid, slot_no: i, account_id: a.id });
+    }
+    for (let i = 1; i <= 3; i++) {
+      t.teams.push({ id: crypto.randomUUID(), competition_id: cid, code: 'team0' + i, name: '測試第' + i + '組', members: '', work_title: '測試作品' + i, work_desc: '' });
     }
     return cid;
   };

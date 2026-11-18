@@ -5,7 +5,7 @@ import { createApi } from './core.js';
 import { createDb } from './db_supabase.js';
 
 const db = createDb(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-const api = createApi({ db, secret: Deno.env.get('TOKEN_SECRET') || '' });
+const api = createApi({ db, secret: Deno.env.get('TOKEN_SECRET') || '', siteBaseUrl: Deno.env.get('SITE_BASE_URL') || '' });
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',

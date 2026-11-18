@@ -11,10 +11,10 @@ const SECRET = 'test-secret-0123456789abcdef-0123456789';
 let passed = 0;
 async function step(name, f) { await f(); passed++; console.log('  ✓', name); }
 
-async function setup(opts) {
+async function setup(opts, apiOpts) {
   const db = createMemDb();
   const cid = await db.seedDemo(opts);
-  const api = createApi({ db, secret: SECRET, now: () => clock });
+  const api = createApi(Object.assign({ db, secret: SECRET, now: () => clock }, apiOpts));
   const call = async (fn, ...args) => {
     const r = await api.handle({ fn, args });
     if (!r.ok) throw new Error(fn + '：' + r.error);
@@ -216,6 +216,98 @@ console.log('P1 登入與 token');
   await step('撤回公布後，公開頁又看不到結果', async () => {
     db._tables.publications[0].revoked_at = '2026-12-20T09:00:00Z';
     assert.equal((await call('publicResults')).published, false);
+  });
+}
+
+/* ═════════════ P2 影片清單同步 ═════════════ */
+console.log('P2 影片清單同步');
+{
+  const sha = c => c.repeat(64);
+  // 格式和 tools/process_videos.py 產生的 manifest.json 相同
+  const entry = (team, version, c, okFlag = true, extra = {}) => Object.assign({
+    team, version, source_filename: `${team}_v${version}.mov`, source_sha256: sha(c), source_size: 123456789,
+    duration_sec: 598.4, container: 'mov,mp4,m4a,3gp,3g2,mj2', vcodec: 'hevc', acodec: 'aac', width: 1080, height: 1920, rotation: 90,
+    check_ok: okFlag, check_notes: okFlag ? '' : '長度 10:01，超過 10:00',
+    playback_path: okFlag ? `videos/${team}_v${version}.mp4` : null, playback_size: okFlag ? 80000000 : null,
+    processed_at: '2026-12-02T03:00:00+00:00',
+  }, extra);
+  let manifest = { format: 1, versions: [entry('team01', 1, 'a'), entry('team02', 1, 'b', false)] };
+  const fetched = [];
+  const fetchJson = async url => { fetched.push(url); if (manifest === 'down') throw new Error('HTTP 404'); return structuredClone(manifest); };
+  const { db, call, expectErr } = await setup({}, { siteBaseUrl: 'https://fbkstj.github.io/cr6', fetchJson });
+  const admin = (await call('login', 'admin01', 'admin-pass-01')).token;
+  const judge = (await call('login', 'judge01', 'judge-pass-01')).token;
+
+  await step('評審不能同步影片清單', async () => {
+    await expectErr(/不能使用此功能/, 'adminSyncVideos', judge);
+  });
+
+  await step('第一次同步：新增合格與不合格的版本，讀的是網站上的 videos/manifest.json', async () => {
+    const r = await call('adminSyncVideos', admin);
+    assert.deepEqual(r.added.map(a => a.label), ['team01_v1', 'team02_v1']);
+    assert.equal(r.added[1].checkOk, false);
+    assert.equal(r.warnings.length, 0);
+    assert.match(fetched[0], /^https:\/\/fbkstj\.github\.io\/cr6\/videos\/manifest\.json\?t=\d+$/);
+    const v = db._tables.video_versions.find(x => x.source_sha256 === sha('a'));
+    assert.equal(v.playback_path, 'videos/team01_v1.mp4');
+    assert.equal(v.duration_sec, 598.4);
+    assert.equal(db._tables.video_versions.find(x => x.source_sha256 === sha('b')).playback_path, null);
+  });
+
+  await step('重複同步不會重複建立版本', async () => {
+    const r = await call('adminSyncVideos', admin);
+    assert.equal(r.added.length, 0);
+    assert.equal(r.skipped, 2);
+    assert.equal(db._tables.video_versions.length, 2);
+  });
+
+  await step('補件版本（_v2）新增為新版本，舊版本保留', async () => {
+    manifest.versions.push(entry('team01', 2, 'c'));
+    const r = await call('adminSyncVideos', admin);
+    assert.deepEqual(r.added.map(a => a.label), ['team01_v2']);
+    assert.equal(db._tables.video_versions.filter(x => x.version_no && db._tables.teams.find(t => t.id === x.team_id).code === 'team01').length, 2);
+  });
+
+  await step('還沒建立的組別、格式錯誤、檔案衝突都列為警告，不寫入', async () => {
+    manifest.versions.push(
+      entry('team09', 1, 'd'),                                    // 沒有這個組別
+      entry('team03', 1, 'e', true, { playback_path: '../../etc/passwd' }),   // 路徑不對
+      entry('team03', 1, 'f', true, { source_sha256: 'xyz' }),    // sha 格式錯
+      entry('team03', 2, 'a'),                                    // 和 team01_v1 同一支檔案
+      entry('team02', 1, '9'),                                    // 版本號相同但檔案不同
+      'not-an-object',
+    );
+    const before = db._tables.video_versions.length;
+    const r = await call('adminSyncVideos', admin);
+    assert.equal(r.added.length, 0);
+    assert.equal(db._tables.video_versions.length, before);
+    const w = r.warnings.join('\n');
+    assert.match(w, /還沒有建立 team09/);
+    assert.match(w, /播放檔路徑應為 videos\/team03_v1\.mp4/);
+    assert.match(w, /sha256 格式錯誤/);
+    assert.match(w, /和 team01_v1 是同一支檔案/);
+    assert.match(w, /已經有這個版本，但檔案不同/);
+    assert.match(w, /不是物件/);
+  });
+
+  await step('網站讀不到清單時顯示明確訊息', async () => {
+    const saved = manifest;
+    manifest = 'down';
+    await expectErr(/讀不到影片清單（HTTP 404）/, 'adminSyncVideos', admin);
+    manifest = { nope: true };
+    await expectErr(/影片清單格式錯誤/, 'adminSyncVideos', admin);
+    manifest = saved;
+  });
+
+  await step('沒有設定 SITE_BASE_URL 時提示部署說明', async () => {
+    const s2 = await setup();
+    const t = (await s2.call('login', 'admin01', 'admin-pass-01')).token;
+    await s2.expectErr(/SITE_BASE_URL/, 'adminSyncVideos', t);
+  });
+
+  await step('同步動作寫入操作紀錄', async () => {
+    const logs = await call('adminLogs', admin);
+    assert.ok(logs.some(l => l.action === 'sync_videos' && l.detail.added.includes('team01_v2')));
   });
 }
 

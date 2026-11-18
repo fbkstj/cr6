@@ -36,6 +36,11 @@ export function createDb(url, serviceKey) {
     /* 評審席位 */
     listJudgeSlots: async cid => must(await sb.from('judge_slots').select('*').eq('competition_id', cid)),
 
+    /* 小組與影片版本 */
+    listTeams: async cid => must(await sb.from('teams').select('*').eq('competition_id', cid)),
+    listVersions: async cid => must(await sb.from('video_versions').select('*').eq('competition_id', cid)),
+    insertVersion: async row => one(await sb.from('video_versions').insert(row).select()),
+
     /* 登入失敗 */
     getLoginFail: async key => one(await sb.from('login_fails').select('*').eq('key', key).limit(1)),
     setLoginFail: async (key, count, until) => { must(await sb.from('login_fails').upsert({ key, count, until })); },

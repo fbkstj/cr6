@@ -27,7 +27,19 @@ function randomPassword(len = 10) {
   return Array.from(buf, x => PW_CHARS[x % PW_CHARS.length]).join('');
 }
 
-export function createApi({ db, secret, now = () => Date.now() }) {
+/** 讀網站上的 JSON（影片清單）。測試時可以換成假的 */
+async function defaultFetchJson(url) {
+  const r = await fetch(url, { signal: AbortSignal.timeout(20000), headers: { 'Cache-Control': 'no-cache' } });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+const TEAM_RE = /^team\d{2}$/;
+const SHA_RE = /^[0-9a-f]{64}$/;
+const str = (v, max) => String(v === null || v === undefined ? '' : v).slice(0, max);
+const numOrNull = v => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
+
+export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = '', fetchJson = defaultFetchJson }) {
   if (!secret || secret.length < 32) throw new Error('TOKEN_SECRET 沒有設定或太短（至少 32 個字元）');
   const keyP = hmacKey(secret);
 
@@ -171,6 +183,76 @@ export function createApi({ db, secret, now = () => Date.now() }) {
     }));
   }
 
+  /* ───────────── 主辦方：影片清單同步（P2） ───────────── */
+
+  /** 驗證清單裡的一筆，回傳要寫入的資料；格式不對回傳錯誤訊息字串 */
+  function parseManifestEntry(e) {
+    if (!e || typeof e !== 'object') return '不是物件';
+    const team = String(e.team || '');
+    const version = Number(e.version);
+    if (!TEAM_RE.test(team)) return '組別代碼格式錯誤';
+    if (!Number.isInteger(version) || version < 1 || version > 99) return '版本號錯誤';
+    if (!SHA_RE.test(String(e.source_sha256 || ''))) return 'sha256 格式錯誤';
+    if (typeof e.check_ok !== 'boolean') return 'check_ok 必須是 true／false';
+    const expectPath = `videos/${team}_v${version}.mp4`;
+    if (e.check_ok && e.playback_path !== expectPath) return '播放檔路徑應為 ' + expectPath;
+    if (!e.check_ok && e.playback_path) return '不合格的版本不應有播放檔';
+    return {
+      team, version_no: version,
+      source_filename: str(e.source_filename, 200) || `${team}_v${version}`,
+      source_sha256: e.source_sha256,
+      source_size: Math.max(0, Math.floor(numOrNull(e.source_size) || 0)),
+      duration_sec: numOrNull(e.duration_sec),
+      container: str(e.container, 100) || null, vcodec: str(e.vcodec, 50) || null, acodec: str(e.acodec, 50) || null,
+      width: numOrNull(e.width), height: numOrNull(e.height),
+      check_ok: e.check_ok, check_notes: str(e.check_notes, 1000),
+      playback_path: e.check_ok ? expectPath : null,
+      playback_size: e.check_ok ? numOrNull(e.playback_size) : null,
+      processed_at: e.processed_at && !isNaN(Date.parse(e.processed_at)) ? iso(e.processed_at) : null,
+    };
+  }
+
+  /** 讀 Pages 上的 videos/manifest.json，把新版本登錄進資料庫（重複按不會重複建立） */
+  async function adminSyncVideos(token) {
+    const acc = await auth(token, 'admin');
+    if (!siteBaseUrl) fail('伺服器沒有設定 SITE_BASE_URL，請見部署說明');
+    const url = siteBaseUrl.replace(/\/?$/, '/') + 'videos/manifest.json?t=' + now();
+    let m;
+    try { m = await fetchJson(url); } catch (e) { fail('讀不到影片清單（' + (e && e.message || e) + '），請確認已經推送並等 1～2 分鐘網站更新'); }
+    if (!m || !Array.isArray(m.versions)) fail('影片清單格式錯誤');
+
+    const teams = await db.listTeams(acc.competition_id);
+    const teamByCode = {}, codeById = {};
+    teams.forEach(t => { teamByCode[t.code] = t; codeById[t.id] = t.code; });
+    const existing = await db.listVersions(acc.competition_id);
+    const bySha = {}, byKey = {};
+    existing.forEach(v => { bySha[v.source_sha256] = v; byKey[codeById[v.team_id] + '|' + v.version_no] = v; });
+
+    const added = [], warnings = [];
+    let skipped = 0;
+    for (let i = 0; i < m.versions.length; i++) {
+      const row = parseManifestEntry(m.versions[i]);
+      if (typeof row === 'string') { warnings.push(`清單第 ${i + 1} 筆：${row}`); continue; }
+      const label = `${row.team}_v${row.version_no}`;
+      const team = teamByCode[row.team];
+      if (!team) { warnings.push(`${label}：還沒有建立 ${row.team} 這個組別，建立後再同步一次`); continue; }
+      const same = bySha[row.source_sha256];
+      if (same) {
+        if (same.team_id === team.id && same.version_no === row.version_no) skipped++;
+        else warnings.push(`${label}：和 ${codeById[same.team_id]}_v${same.version_no} 是同一支檔案，略過`);
+        continue;
+      }
+      if (byKey[row.team + '|' + row.version_no]) { warnings.push(`${label}：資料庫已經有這個版本，但檔案不同，請檢查原檔`); continue; }
+      const { team: _t, ...data } = row;
+      const saved = await db.insertVersion(Object.assign(data, { competition_id: acc.competition_id, team_id: team.id }));
+      bySha[row.source_sha256] = saved;
+      byKey[row.team + '|' + row.version_no] = saved;
+      added.push({ label, checkOk: row.check_ok, notes: row.check_notes });
+    }
+    await log(acc, 'sync_videos', 'manifest.json', { added: added.map(a => a.label), skipped, warnings: warnings.length });
+    return { added, skipped, warnings };
+  }
+
   /* ───────────── 公開（免登入） ───────────── */
 
   /** 公布後的結果。只輸出白名單欄位：快照裡就算有評審姓名也不會流出 */
@@ -209,6 +291,7 @@ export function createApi({ db, secret, now = () => Date.now() }) {
   const API = {
     login, me, changePassword,
     adminListAccounts, adminUpsertAccount, adminResetPassword, adminLogs,
+    adminSyncVideos,
     publicResults,
   };
 
