@@ -4,13 +4,55 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>專題競賽評分</title>
-<style>
-  body { font-family: system-ui, "Noto Sans TC", sans-serif; background: #f7f7f5; color: #222; margin: 0; padding: 48px 16px; text-align: center; }
-  @media (prefers-color-scheme: dark) { body { background: #1b1b1a; color: #eee; } }
-</style>
+<link rel="stylesheet" href="assets/style.css">
+<script src="config.js"></script>
 </head>
 <body>
-  <h1>專題競賽評分系統</h1>
-  <p>建置中</p>
+<div class="center">
+  <div class="login">
+    <div class="card stack">
+      <div>
+        <h1>專題競賽評分系統</h1>
+        <p class="muted small" style="margin:0">評審與主辦人員登入</p>
+      </div>
+      <div id="msg" class="notice warn hidden" role="alert"></div>
+      <form id="form" class="stack" autocomplete="on">
+        <div class="field">
+          <label for="loginId">帳號</label>
+          <input id="loginId" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="例如 judge01" required>
+        </div>
+        <div class="field">
+          <label for="password">密碼</label>
+          <input id="password" type="password" autocomplete="current-password" required>
+        </div>
+        <button class="btn primary" type="submit" style="width:100%;justify-content:center">登入</button>
+      </form>
+    </div>
+    <p class="muted small" style="text-align:center"><a href="results.html">查看收件狀態與比賽結果</a></p>
+  </div>
+</div>
+<script type="module">
+import { api, setToken, getToken, devBanner } from './assets/app.js';
+devBanner();
+const msg = document.getElementById('msg');
+const show = t => { msg.textContent = t; msg.classList.remove('hidden'); };
+if (new URLSearchParams(location.search).has('expired')) show('登入已逾時，請重新登入');
+const go = role => { location.href = role === 'admin' ? './admin.html' : './judge.html'; };
+if (getToken()) api('me', getToken()).then(r => go(r.role)).catch(() => setToken(''));
+document.getElementById('form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn = e.submitter;
+  btn.disabled = true;
+  msg.classList.add('hidden');
+  try {
+    const r = await api('login', document.getElementById('loginId').value, document.getElementById('password').value);
+    setToken(r.token);
+    go(r.role);
+  } catch (err) {
+    show(err.message);
+    btn.disabled = false;
+  }
+});
+</script>
 </body>
 </html>

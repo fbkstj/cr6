@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "評分系統本機",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["test/devserver.mjs", "8790"],
+      "port": 8790
+    }
+  ]
+}

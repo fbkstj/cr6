@@ -97,5 +97,42 @@ anonPriv === 0 ? ok('anon／authenticated 沒有任何資料表權限') : bad('�
 const fnPriv = (await db.query(`select has_function_privilege('anon','check_password(text,text)','execute') a, has_function_privilege('anon','set_password(text,text)','execute') b, has_function_privilege('anon','create_competition(text,text,text,text,int)','execute') c`)).rows[0];
 !fnPriv.a && !fnPriv.b && !fnPriv.c ? ok('anon 不能執行密碼與建立競賽函式') : bad('函式權限', JSON.stringify(fnPriv));
 
+/* ───── P3：評分表、鎖版 ───── */
+const rid = (await db.query(`select rubric_id from competitions where id=$1`, [cid])).rows[0].rubric_id;
+await expectFail('評分表總分不是 100 被拒', `select save_rubric($1, $2::jsonb)`, [rid, JSON.stringify([{ title: 'A', max_score: 60 }, { title: 'B', max_score: 30 }])], /總分必須是 100/);
+await expectOk('儲存評分表（3 項 50／30／20）', `select save_rubric($1, $2::jsonb)`, [rid, JSON.stringify([{ title: '應用', max_score: 50 }, { title: '課程', max_score: 30, description: '判準' }, { title: '創意', max_score: 20 }])]);
+const ri = (await db.query(`select title, max_score, sort from rubric_items where rubric_id=$1 order by sort`, [rid])).rows;
+ri.length === 3 && ri[0].title === '應用' && ri[2].sort === 3 ? ok('評分表項目與順序正確') : bad('評分表項目', JSON.stringify(ri));
+
+await expectFail('setup 階段不能開始評分', `select lock_for_judging($1, $2)`, [cid, good], /收件審查/);
+await db.query(`update competitions set phase='collecting' where id=$1`, [cid]);
+await expectFail('評審席位沒排滿不能開始評分', `select lock_for_judging($1, $2)`, [cid, good], /席位還沒排滿（1 \/ 5）/);
+for (let i = 2; i <= 5; i++) await db.query(`insert into judge_slots(competition_id, slot_no, account_id) values($1,$2,$3)`, [cid, i, j[i - 1]]);
+await db.query(`insert into team_current(team_id, version_id) values($1,$2)`, [tid, vid]);   // team01 最新審查是 fail
+const tid2 = (await db.query(`insert into teams(competition_id, code) values($1,'team02') returning id`, [cid])).rows[0].id;
+const vid2 = (await db.query(`insert into video_versions(competition_id, team_id, version_no, source_filename, source_sha256, source_size, check_ok, playback_path)
+  values($1,$2,1,'team02_v1.mp4',$3,100,true,'videos/team02_v1.mp4') returning id`, [cid, tid2, 'd'.repeat(64)])).rows[0].id;
+await db.query(`insert into team_current(team_id, version_id) values($1,$2)`, [tid2, vid2]);   // team02 還沒審查
+const st = (await db.query(`select current_review_status($1) a, current_review_status($2) b`, [vid, vid2])).rows[0];
+st.a === 'fail' && st.b === 'pending' ? ok('current_review_status 取最新一筆，沒審查為 pending') : bad('審查狀態', JSON.stringify(st));
+await expectFail('有未完成的審查不能開始評分', `select lock_for_judging($1, $2)`, [cid, good], /還有 1 組/);
+await db.query(`insert into reviews(version_id, status, reason) values($1,'resubmit','畫面中斷')`, [vid2]);
+await expectFail('沒有任何通過的作品不能開始評分', `select lock_for_judging($1, $2)`, [cid, good], /沒有任何資格通過/);
+const locks0 = (await db.query(`select count(*)::int n from judging_locks`)).rows[0].n;
+const phase0 = (await db.query(`select phase from competitions where id=$1`, [cid])).rows[0].phase;
+locks0 === 0 && phase0 === 'collecting' ? ok('失敗時什麼都沒寫入（沒有鎖版、階段不變）') : bad('原子性', locks0 + ' ' + phase0);
+
+await db.query(`insert into reviews(version_id, status) values($1,'pass')`, [vid]);
+const lr = (await db.query(`select lock_for_judging($1, $2) r`, [cid, good])).rows[0].r;
+lr.locked === 1 && JSON.stringify(lr.excluded) === '["team02"]' ? ok('開始評分：鎖定 1 組，列出未進入評分的 team02') : bad('鎖版結果', JSON.stringify(lr));
+const after = (await db.query(`select c.phase, rb.locked from competitions c join rubrics rb on rb.id=c.rubric_id where c.id=$1`, [cid])).rows[0];
+after.phase === 'judging' && after.locked ? ok('階段改為 judging，評分表鎖定') : bad('鎖版後狀態', JSON.stringify(after));
+await expectFail('評分表鎖定後不能修改', `select save_rubric($1, $2::jsonb)`, [rid, JSON.stringify([{ title: 'X', max_score: 100 }])], /已鎖定/);
+await expectFail('評分階段不能重複鎖版', `select lock_for_judging($1, $2)`, [cid, good], /收件審查/);
+const lg = (await db.query(`select count(*)::int n from admin_logs where action='lock_for_judging'`)).rows[0].n;
+lg === 1 ? ok('鎖版寫入操作紀錄') : bad('鎖版紀錄', lg);
+const fp = (await db.query(`select has_function_privilege('anon','lock_for_judging(uuid,uuid)','execute') a, has_function_privilege('anon','save_rubric(uuid,jsonb)','execute') b`)).rows[0];
+!fp.a && !fp.b ? ok('anon 不能執行鎖版與評分表函式') : bad('函式權限', JSON.stringify(fp));
+
 console.log(`\n通過 ${pass}，失敗 ${failN}`);
 process.exit(failN ? 1 : 0);

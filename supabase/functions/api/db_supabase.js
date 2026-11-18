@@ -8,7 +8,12 @@ export function createDb(url, serviceKey) {
   const sb = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
   function must({ data, error }) {
-    if (error) throw new Error('資料庫錯誤：' + error.message);
+    if (error) {
+      const e = new Error('資料庫錯誤：' + error.message);
+      // 資料庫函式用 raise exception 丟出的中文訊息（SQLSTATE P0001）可以直接顯示給使用者
+      if (error.code === 'P0001') e.userMessage = error.message;
+      throw e;
+    }
     return data;
   }
   const one = r => { const d = must(r); return Array.isArray(d) ? (d[0] || null) : d; };
@@ -33,13 +38,44 @@ export function createDb(url, serviceKey) {
     checkPassword: async (loginId, pw) => must(await sb.rpc('check_password', { p_login: loginId, p_pw: pw })) || null,
     setPassword: async (loginId, pw) => { must(await sb.rpc('set_password', { p_login: loginId, p_pw: pw })); },
 
+    updateCompetition: async (id, patch) => { must(await sb.from('competitions').update(patch).eq('id', id)); },
+
     /* 評審席位 */
     listJudgeSlots: async cid => must(await sb.from('judge_slots').select('*').eq('competition_id', cid)),
+    upsertSlot: async row => { must(await sb.from('judge_slots').upsert(row)); },
+    deleteSlot: async (cid, slotNo) => { must(await sb.from('judge_slots').delete().eq('competition_id', cid).eq('slot_no', slotNo)); },
+    deleteSlotsAbove: async (cid, n) => { must(await sb.from('judge_slots').delete().eq('competition_id', cid).gt('slot_no', n)); },
+
+    /* 評分表 */
+    async getRubric(id) {
+      if (!id) return null;
+      const r = one(await sb.from('rubrics').select('*').eq('id', id).limit(1));
+      if (!r) return null;
+      r.items = must(await sb.from('rubric_items').select('*').eq('rubric_id', id));
+      return r;
+    },
+    saveRubric: async (rid, items) => must(await sb.rpc('save_rubric', { p_rubric: rid, p_items: items })),
 
     /* 小組與影片版本 */
     listTeams: async cid => must(await sb.from('teams').select('*').eq('competition_id', cid)),
+    getTeam: async id => one(await sb.from('teams').select('*').eq('id', id).limit(1)),
+    insertTeam: async row => one(await sb.from('teams').insert(row).select()),
+    updateTeam: async (id, patch) => { must(await sb.from('teams').update(patch).eq('id', id)); },
+    deleteTeam: async id => { must(await sb.from('teams').delete().eq('id', id)); },
     listVersions: async cid => must(await sb.from('video_versions').select('*').eq('competition_id', cid)),
+    getVersion: async id => one(await sb.from('video_versions').select('*').eq('id', id).limit(1)),
     insertVersion: async row => one(await sb.from('video_versions').insert(row).select()),
+    updateVersion: async (id, patch) => { must(await sb.from('video_versions').update(patch).eq('id', id)); },
+    setTeamCurrent: async row => { must(await sb.from('team_current').upsert(row)); },
+    listTeamCurrent: async cid => must(await sb.from('team_current').select('team_id, version_id, teams!inner(competition_id)').eq('teams.competition_id', cid))
+      .map(({ teams, ...r }) => r),
+    listLocks: async cid => must(await sb.from('judging_locks').select('team_id, version_id, locked_at, teams!inner(competition_id)').eq('teams.competition_id', cid))
+      .map(({ teams, ...r }) => r),
+
+    /* 資格審查 */
+    listReviews: async ids => (ids.length ? must(await sb.from('reviews').select('*').in('version_id', ids)) : []),
+    insertReview: async row => { must(await sb.from('reviews').insert(row)); },
+    lockForJudging: async (cid, actor) => must(await sb.rpc('lock_for_judging', { p_competition: cid, p_actor: actor })),
 
     /* 登入失敗 */
     getLoginFail: async key => one(await sb.from('login_fails').select('*').eq('key', key).limit(1)),

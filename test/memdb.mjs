@@ -1,28 +1,44 @@
 // 本機測試用的記憶體資料庫：介面和 supabase/functions/api/db_supabase.js 一樣。
+// 資料庫函式（save_rubric、lock_for_judging）照 SQL 版的規則用 JS 實作；SQL 版本身由 test/check_sql.mjs 驗證。
 // 密碼用 scrypt 雜湊（正式環境是資料庫裡的 bcrypt），同樣不會把雜湊回傳給 core.js。
 import crypto from 'node:crypto';
 
 const hashPw = pw => { const salt = crypto.randomBytes(8).toString('hex'); return salt + ':' + crypto.scryptSync(pw, salt, 32).toString('hex'); };
 const verifyPw = (pw, h) => { if (!h) return false; const [salt, hex] = h.split(':'); return crypto.timingSafeEqual(Buffer.from(hex, 'hex'), crypto.scryptSync(pw, salt, 32)); };
 
+/** 模擬資料庫函式 raise exception（core.js 會把 userMessage 顯示給使用者） */
+const raise = msg => { const e = new Error(msg); e.userMessage = msg; throw e; };
+
 export function createMemDb() {
-  const t = { competitions: [], accounts: [], judge_slots: [], teams: [], video_versions: [], login_fails: [], admin_logs: [], publications: [] };
+  const t = {
+    competitions: [], accounts: [], rubrics: [], rubric_items: [], judge_slots: [], teams: [], video_versions: [],
+    team_current: [], reviews: [], judging_locks: [], login_fails: [], admin_logs: [], publications: [],
+  };
   const clone = v => (v === undefined ? undefined : structuredClone(v));
   const strip = a => { if (!a) return null; const { password_hash, ...rest } = a; return Object.assign(clone(rest), { has_password: !!password_hash }); };
-  let logId = 0;
+  const nowIso = () => new Date().toISOString();
+  let seq = 0;
+  const teamIdsOf = cid => new Set(t.teams.filter(x => x.competition_id === cid).map(x => x.id));
+  const latestStatus = vid => {
+    const rs = t.reviews.filter(r => r.version_id === vid).sort((a, b) => b.id - a.id);
+    return rs.length ? rs[0].status : 'pending';
+  };
 
   const db = {
     _tables: t,
 
+    /* 競賽 */
     getCompetition: async id => clone(t.competitions.find(c => c.id === id) || null),
     getActiveCompetition: async () => clone(t.competitions.find(c => c.active) || null),
+    updateCompetition: async (id, patch) => { Object.assign(t.competitions.find(c => c.id === id), clone(patch)); },
 
+    /* 帳號 */
     getAccount: async id => strip(t.accounts.find(a => a.id === id)),
     getAccountByLogin: async loginId => strip(t.accounts.find(a => a.login_id === loginId)),
     listAccounts: async cid => t.accounts.filter(a => a.competition_id === cid).map(strip),
     insertAccount: async row => {
       if (t.accounts.some(a => a.login_id === row.login_id)) throw new Error('duplicate login_id');
-      const r = Object.assign({ id: crypto.randomUUID(), password_hash: null, created_at: new Date().toISOString() }, row);
+      const r = Object.assign({ id: crypto.randomUUID(), password_hash: null, created_at: nowIso() }, row);
       t.accounts.push(r);
       return strip(r);
     },
@@ -32,26 +48,102 @@ export function createMemDb() {
       return a && a.active && verifyPw(String(pw), a.password_hash) ? a.id : null;
     },
     setPassword: async (loginId, pw) => {
-      if (String(pw).length < 8) throw new Error('密碼至少 8 個字');
+      if (String(pw).length < 8) raise('密碼至少 8 個字');
       const a = t.accounts.find(x => x.login_id === loginId);
-      if (!a) throw new Error('找不到帳號');
+      if (!a) raise('找不到帳號');
       a.password_hash = hashPw(String(pw));
     },
 
+    /* 評審席位 */
     listJudgeSlots: async cid => clone(t.judge_slots.filter(s => s.competition_id === cid)),
+    upsertSlot: async row => {
+      if (t.judge_slots.some(s => s.competition_id === row.competition_id && s.account_id === row.account_id && s.slot_no !== row.slot_no)) throw new Error('duplicate judge');
+      const i = t.judge_slots.findIndex(s => s.competition_id === row.competition_id && s.slot_no === row.slot_no);
+      if (i >= 0) t.judge_slots[i] = clone(row); else t.judge_slots.push(clone(row));
+    },
+    deleteSlot: async (cid, n) => { t.judge_slots = t.judge_slots.filter(s => !(s.competition_id === cid && s.slot_no === n)); },
+    deleteSlotsAbove: async (cid, n) => { t.judge_slots = t.judge_slots.filter(s => !(s.competition_id === cid && s.slot_no > n)); },
 
+    /* 評分表 */
+    getRubric: async id => {
+      const r = t.rubrics.find(x => x.id === id);
+      return r ? Object.assign(clone(r), { items: clone(t.rubric_items.filter(i => i.rubric_id === id)) }) : null;
+    },
+    saveRubric: async (rid, items) => {   // 同 SQL save_rubric
+      const r = t.rubrics.find(x => x.id === rid);
+      if (!r) raise('找不到評分表');
+      const c = t.competitions.find(x => x.id === r.competition_id);
+      if (r.locked || !['setup', 'collecting'].includes(c.phase)) raise('評分表已鎖定，不能修改');
+      const total = items.reduce((s, i) => s + i.max_score, 0);
+      if (total !== 100) raise(`評分表總分必須是 100（目前 ${total}）`);
+      t.rubric_items = t.rubric_items.filter(i => i.rubric_id !== rid)
+        .concat(items.map((i, k) => ({ id: crypto.randomUUID(), rubric_id: rid, sort: k + 1, title: i.title, max_score: i.max_score, description: i.description || '' })));
+      return items.length;
+    },
+
+    /* 小組與影片版本 */
     listTeams: async cid => clone(t.teams.filter(x => x.competition_id === cid)),
+    getTeam: async id => clone(t.teams.find(x => x.id === id) || null),
+    insertTeam: async row => {
+      if (t.teams.some(x => x.competition_id === row.competition_id && x.code === row.code)) throw new Error('duplicate team');
+      const r = Object.assign({ id: crypto.randomUUID(), name: '', members: '', work_title: '', work_desc: '', created_at: nowIso() }, clone(row));
+      t.teams.push(r);
+      return clone(r);
+    },
+    updateTeam: async (id, patch) => { Object.assign(t.teams.find(x => x.id === id), clone(patch)); },
+    deleteTeam: async id => { t.teams = t.teams.filter(x => x.id !== id); },
     listVersions: async cid => clone(t.video_versions.filter(v => v.competition_id === cid)),
+    getVersion: async id => clone(t.video_versions.find(v => v.id === id) || null),
     insertVersion: async row => {
       // 和資料庫相同的唯一約束
       if (t.video_versions.some(v => v.competition_id === row.competition_id && v.source_sha256 === row.source_sha256)) throw new Error('duplicate sha256');
       if (t.video_versions.some(v => v.team_id === row.team_id && v.version_no === row.version_no)) throw new Error('duplicate version');
       if (row.check_ok && !row.playback_path) throw new Error('check_ok without playback');
-      const r = Object.assign({ id: crypto.randomUUID(), created_at: new Date().toISOString() }, clone(row));
+      const r = Object.assign({ id: crypto.randomUUID(), received_at: null, created_at: nowIso() }, clone(row));
       t.video_versions.push(r);
       return clone(r);
     },
+    updateVersion: async (id, patch) => { Object.assign(t.video_versions.find(v => v.id === id), clone(patch)); },
+    setTeamCurrent: async row => {
+      const i = t.team_current.findIndex(x => x.team_id === row.team_id);
+      if (i >= 0) t.team_current[i] = clone(row); else t.team_current.push(clone(row));
+    },
+    listTeamCurrent: async cid => { const ids = teamIdsOf(cid); return clone(t.team_current.filter(x => ids.has(x.team_id))); },
+    listLocks: async cid => { const ids = teamIdsOf(cid); return clone(t.judging_locks.filter(x => ids.has(x.team_id))); },
 
+    /* 資格審查 */
+    listReviews: async ids => clone(t.reviews.filter(r => ids.includes(r.version_id))),
+    insertReview: async row => {
+      if ((row.status === 'resubmit' || row.status === 'fail') && !String(row.reason || '').trim()) throw new Error('reason required');
+      t.reviews.push(Object.assign({ id: ++seq }, clone(row)));
+    },
+
+    /** 同 SQL lock_for_judging：先全部檢查，全部通過才一次寫入 */
+    lockForJudging: async (cid, actor) => {
+      const c = t.competitions.find(x => x.id === cid);
+      if (c.phase !== 'collecting') raise('只有「收件審查」階段可以開始評分');
+      const n = t.judge_slots.filter(s => s.competition_id === cid && s.slot_no <= c.judge_count
+        && t.accounts.some(a => a.id === s.account_id && a.active && a.role === 'judge')).length;
+      if (n < c.judge_count) raise(`評審席位還沒排滿（${n} / ${c.judge_count}）`);
+      if (t.rubric_items.filter(i => i.rubric_id === c.rubric_id).reduce((s, i) => s + i.max_score, 0) !== 100) raise('評分表總分必須是 100');
+      const ids = teamIdsOf(cid);
+      const cur = t.team_current.filter(x => ids.has(x.team_id));
+      const pend = cur.filter(x => latestStatus(x.version_id) === 'pending').length;
+      if (pend) raise(`還有 ${pend} 組的資格審查未完成`);
+      const pass = cur.filter(x => latestStatus(x.version_id) === 'pass');
+      if (!pass.length) raise('沒有任何資格通過的作品');
+      t.judging_locks = t.judging_locks.filter(x => !ids.has(x.team_id))
+        .concat(pass.map(x => ({ team_id: x.team_id, version_id: x.version_id, locked_at: nowIso(), locked_by: actor })));
+      const lockedIds = new Set(pass.map(x => x.team_id));
+      const excluded = t.teams.filter(x => ids.has(x.id) && !lockedIds.has(x.id)).map(x => x.code).sort();
+      t.judge_slots = t.judge_slots.filter(s => !(s.competition_id === cid && s.slot_no > c.judge_count));
+      t.rubrics.find(r => r.id === c.rubric_id).locked = true;
+      c.phase = 'judging';
+      t.admin_logs.push({ id: ++seq, competition_id: cid, actor, action: 'lock_for_judging', target: '', detail: { locked: pass.length, excluded }, at: nowIso() });
+      return { locked: pass.length, excluded };
+    },
+
+    /* 登入失敗 */
     getLoginFail: async key => clone(t.login_fails.find(f => f.key === key) || null),
     setLoginFail: async (key, count, until) => {
       const f = t.login_fails.find(x => x.key === key);
@@ -59,25 +151,31 @@ export function createMemDb() {
     },
     clearLoginFail: async key => { t.login_fails = t.login_fails.filter(f => f.key !== key); },
 
-    insertAdminLog: async row => { t.admin_logs.push(Object.assign({ id: ++logId }, clone(row))); },
+    /* 紀錄 */
+    insertAdminLog: async row => { t.admin_logs.push(Object.assign({ id: ++seq }, clone(row))); },
     listAdminLogs: async (cid, n) => clone(t.admin_logs.filter(l => l.competition_id === cid).sort((a, b) => b.id - a.id).slice(0, n)),
 
+    /* 公布 */
     getLivePublication: async cid => clone(t.publications.find(p => p.competition_id === cid && !p.revoked_at) || null),
   };
 
-  /** 測試資料：等同 SQL 的 create_competition＋5 位評審 */
-  db.seedDemo = async ({ judgeCount = 5 } = {}) => {
-    const cid = crypto.randomUUID();
-    t.competitions.push({ id: cid, name: '測試競賽（合成資料）', active: true, phase: 'setup', judge_count: judgeCount, show_status_page: true, show_item_scores: false, min_comment_chars: 10 });
+  /** 測試資料：等同 SQL 的 create_competition＋5 位評審＋3 個組別（全部是合成資料） */
+  db.seedDemo = async ({ judgeCount = 5, teams = 3 } = {}) => {
+    const cid = crypto.randomUUID(), rid = crypto.randomUUID();
+    t.competitions.push({ id: cid, name: '測試競賽（合成資料）', active: true, phase: 'setup', judge_count: judgeCount, rubric_id: rid,
+      show_status_page: true, show_item_scores: false, min_comment_chars: 10 });
+    t.rubrics.push({ id: rid, competition_id: cid, name: '預設評分表', version: 1, locked: false });
+    [['專題作品的應用及整合性', 40], ['專題作品與課程相關', 25], ['創意性與實用性', 25], ['作品說明的組織與表達', 10]]
+      .forEach(([title, max], k) => t.rubric_items.push({ id: crypto.randomUUID(), rubric_id: rid, sort: k + 1, title, max_score: max, description: '' }));
     await db.insertAccount({ competition_id: cid, login_id: 'admin01', display_name: '主辦人員', role: 'admin', active: true });
     await db.setPassword('admin01', 'admin-pass-01');
     for (let i = 1; i <= 5; i++) {
       const a = await db.insertAccount({ competition_id: cid, login_id: 'judge0' + i, display_name: '測試評審' + i, role: 'judge', active: true });
       await db.setPassword('judge0' + i, 'judge-pass-0' + i);
-      if (i <= judgeCount) t.judge_slots.push({ competition_id: cid, slot_no: i, account_id: a.id });
+      if (i <= judgeCount) t.judge_slots.push({ competition_id: cid, slot_no: i, account_id: a.id, assigned_at: nowIso(), replaced_reason: null });
     }
-    for (let i = 1; i <= 3; i++) {
-      t.teams.push({ id: crypto.randomUUID(), competition_id: cid, code: 'team0' + i, name: '測試第' + i + '組', members: '', work_title: '測試作品' + i, work_desc: '' });
+    for (let i = 1; i <= teams; i++) {
+      t.teams.push({ id: crypto.randomUUID(), competition_id: cid, code: 'team' + String(i).padStart(2, '0'), name: '測試第' + i + '組', members: '', work_title: '測試作品' + i, work_desc: '', created_at: nowIso() });
     }
     return cid;
   };
