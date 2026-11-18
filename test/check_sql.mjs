@@ -169,5 +169,33 @@ await db.query(`insert into scores(competition_id, team_id, version_id, slot_no,
 const fp4 = (await db.query(`select has_function_privilege('anon','judge_save(uuid,uuid,jsonb,text,text,boolean)','execute') a, has_function_privilege('anon','return_score(uuid,uuid,text)','execute') b`)).rows[0];
 !fp4.a && !fp4.b ? ok('anon 不能執行評分與退回函式') : bad('函式權限', JSON.stringify(fp4));
 
+/* ───── P5：公布與撤回 ───── */
+// 目前：team01 鎖定、評審1 已送出，評審2～5 還沒評；階段 judging
+const snap = JSON.stringify({ teams: [{ code: 'team01', rank: 1 }] });
+await db.query(`update publications set revoked_at = now() where competition_id=$1 and revoked_at is null`, [cid]);   // 清掉前面測約束時建的公布
+await expectFail('評分階段不能公布', `select publish_results($1,$2,$3::jsonb)`, [cid, good, snap], /只有「結算」階段/);
+await db.query(`update competitions set phase='settling' where id=$1`, [cid]);
+await expectFail('評分沒收齊不能公布', `select publish_results($1,$2,$3::jsonb)`, [cid, good, snap], /還有 1 件作品的評分沒有收齊/);
+for (let i = 2; i <= 5; i++) {
+  await db.query(`update competitions set phase='judging' where id=$1`, [cid]);
+  await save(j[i - 1], tid, sc(40, 20, 15), okText, '可以補充測試數據與對照組', true);
+}
+await db.query(`update competitions set phase='settling' where id=$1`, [cid]);
+await expectFail('快照格式錯誤被拒', `select publish_results($1,$2,'{"teams":1}'::jsonb)`, [cid, good], /格式錯誤/);
+const pid = (await db.query(`select publish_results($1,$2,$3::jsonb) id`, [cid, good, snap])).rows[0].id;
+const ph = (await db.query(`select phase from competitions where id=$1`, [cid])).rows[0].phase;
+pid && ph === 'published' ? ok('收齊後可以公布，階段改為已公布') : bad('公布', ph);
+await expectFail('已公布不能重複公布', `select publish_results($1,$2,$3::jsonb)`, [cid, good, snap], /只有「結算」階段/);
+await expectFail('公布後不能再退回評分', `select return_score((select id from scores where team_id=$1 and slot_no=1), $2, 'x')`, [tid, good], /目前階段不能退回/);
+await expectFail('撤回必須填原因', `select revoke_publication($1,$2,' ')`, [cid, good], /必須填寫原因/);
+await expectOk('撤回公布', `select revoke_publication($1,$2,'名次有誤')`, [cid, good]);
+const rv = (await db.query(`select (select phase from competitions where id=$1) phase, (select count(*)::int from publications where competition_id=$1 and revoked_at is null) live, (select revoke_reason from publications where id=$2) reason`, [cid, pid])).rows[0];
+rv.phase === 'settling' && rv.live === 0 && rv.reason === '名次有誤' ? ok('撤回後回到結算、沒有公布中的結果、保留撤回原因') : bad('撤回', JSON.stringify(rv));
+await expectOk('撤回後可以重新公布', `select publish_results($1,$2,$3::jsonb)`, [cid, good, snap]);
+const pl = (await db.query(`select array_agg(action order by id) a from admin_logs where action in ('publish','revoke')`)).rows[0].a;
+JSON.stringify(pl) === '["publish","revoke","publish"]' ? ok('公布與撤回都有操作紀錄') : bad('紀錄', JSON.stringify(pl));
+const fp5 = (await db.query(`select has_function_privilege('anon','publish_results(uuid,uuid,jsonb)','execute') a, has_function_privilege('anon','revoke_publication(uuid,uuid,text)','execute') b`)).rows[0];
+!fp5.a && !fp5.b ? ok('anon 不能執行公布與撤回函式') : bad('函式權限', JSON.stringify(fp5));
+
 console.log(`\n通過 ${pass}，失敗 ${failN}`);
 process.exit(failN ? 1 : 0);

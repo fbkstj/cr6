@@ -12,7 +12,7 @@ const raise = msg => { const e = new Error(msg); e.userMessage = msg; throw e; }
 export function createMemDb() {
   const t = {
     competitions: [], accounts: [], rubrics: [], rubric_items: [], judge_slots: [], teams: [], video_versions: [],
-    team_current: [], reviews: [], judging_locks: [], scores: [], score_history: [], login_fails: [], admin_logs: [], publications: [],
+    team_current: [], reviews: [], judging_locks: [], scores: [], score_history: [], tie_decisions: [], login_fails: [], admin_logs: [], publications: [],
   };
   const clone = v => (v === undefined ? undefined : structuredClone(v));
   const strip = a => { if (!a) return null; const { password_hash, ...rest } = a; return Object.assign(clone(rest), { has_password: !!password_hash }); };
@@ -223,7 +223,38 @@ export function createMemDb() {
     insertAdminLog: async row => { t.admin_logs.push(Object.assign({ id: ++seq }, clone(row))); },
     listAdminLogs: async (cid, n) => clone(t.admin_logs.filter(l => l.competition_id === cid).sort((a, b) => b.id - a.id).slice(0, n)),
 
-    /* 公布 */
+    /* 同分處理與公布 */
+    listTieDecisions: async cid => clone(t.tie_decisions.filter(d => d.competition_id === cid)),
+    insertTieDecision: async row => {
+      if (!String(row.reason || '').trim()) throw new Error('reason required');
+      t.tie_decisions.push(Object.assign({ id: crypto.randomUUID(), seq: ++seq }, clone(row)));
+    },
+    /** 同 SQL publish_results */
+    publishResults: async (cid, actor, snapshot) => {
+      const c = t.competitions.find(x => x.id === cid);
+      if (c.phase !== 'settling') raise('只有「結算」階段可以公布');
+      if (!snapshot || !Array.isArray(snapshot.teams)) raise('結果快照格式錯誤');
+      const ids = teamIdsOf(cid);
+      const missing = t.judging_locks.filter(l => ids.has(l.team_id)
+        && t.scores.filter(s => s.team_id === l.team_id && s.status === 'submitted' && s.slot_no <= c.judge_count).length < c.judge_count).length;
+      if (missing) raise(`還有 ${missing} 件作品的評分沒有收齊`);
+      if (t.publications.some(p => p.competition_id === cid && !p.revoked_at)) raise('已經公布過了，請先撤回');
+      const p = { id: crypto.randomUUID(), competition_id: cid, published_at: nowIso(), published_by: actor, snapshot: clone(snapshot), revoked_at: null };
+      t.publications.push(p);
+      c.phase = 'published';
+      t.admin_logs.push({ id: ++seq, competition_id: cid, actor, action: 'publish', target: p.id, detail: { teams: snapshot.teams.length }, at: nowIso() });
+      return p.id;
+    },
+    /** 同 SQL revoke_publication */
+    revokePublication: async (cid, actor, reason) => {
+      const c = t.competitions.find(x => x.id === cid);
+      if (c.phase !== 'published') raise('目前沒有公布中的結果');
+      if (!String(reason || '').trim()) raise('撤回必須填寫原因');
+      const p = t.publications.find(x => x.competition_id === cid && !x.revoked_at);
+      if (p) Object.assign(p, { revoked_at: nowIso(), revoked_by: actor, revoke_reason: String(reason).trim() });
+      c.phase = 'settling';
+      t.admin_logs.push({ id: ++seq, competition_id: cid, actor, action: 'revoke', target: p ? p.id : '', detail: { reason: String(reason).trim() }, at: nowIso() });
+    },
     getLivePublication: async cid => clone(t.publications.find(p => p.competition_id === cid && !p.revoked_at) || null),
   };
 

@@ -27,6 +27,7 @@ try {
           <span class="chip accent" style="font-size:1rem">平均 ${t.average === null ? '—' : t.average.toFixed(2)} 分</span>
         </div>
         ${t.workTitle ? `<div class="muted">${esc(t.workTitle)}</div>` : ''}
+        ${t.tieBroken ? '<div class="small muted">與其他組平均同分，名次由主辦單位依規定決定。</div>' : ''}
         <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr))">
           ${t.judges.map(j => `<div class="card" style="box-shadow:none">
             <div class="row" style="justify-content:space-between"><b>${esc(j.label)}</b><span>${j.total} 分</span></div>

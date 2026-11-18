@@ -549,13 +549,18 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
   async function adminSetPhase(token, phase) {
     const acc = await auth(token, 'admin');
     const c = await compOf(acc);
-    const allowed = { setup: ['collecting'], collecting: ['setup', 'judging'] }[c.phase] || [];
+    const allowed = { setup: ['collecting'], collecting: ['setup', 'judging'], judging: ['settling'], settling: ['judging'] }[c.phase] || [];
     if (!allowed.includes(phase)) fail(`目前是「${PHASE_LABEL[c.phase]}」，不能切換到「${PHASE_LABEL[phase] || phase}」`);
-    if (phase === 'judging') {
+    if (phase === 'judging' && c.phase === 'collecting') {
       const chk = await judgingCheck(c);
       if (chk.problems.length) fail(chk.problems.join('；'));
       const r = await db.lockForJudging(c.id, acc.id);   // 資料庫函式：再檢查一次並一次完成（失敗就全部不做）
       return { phase: 'judging', locked: r.locked, excluded: r.excluded };
+    }
+    // settling → judging：回到評分階段（例如發現要再請評審修改），版本鎖定不變
+    if (phase === 'settling') {
+      const r = await computeRanking(c);
+      if (r.incomplete.length) fail(`還有 ${r.incomplete.length} 件作品的評分沒有收齊：${r.incomplete.map(x => `${x.code}（${x.submitted}/${c.judge_count}）`).join('、')}`);
     }
     await db.updateCompetition(c.id, { phase });
     await log(acc, 'set_phase', PHASE_LABEL[phase], { from: c.phase, to: phase });
@@ -714,6 +719,163 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     return { ok: true };
   }
 
+  /* ───────────── 結算、同分、匯出、公布（P5） ───────────── */
+
+  const sameSet = (a, b) => a.length === b.length && a.slice().sort().join(',') === b.slice().sort().join(',');
+
+  /**
+   * 排名規則（開發計畫書第 7 節）：
+   * - 每件作品收齊 N 份正式評分才算完成；平均 = 總分和 ÷ N。
+   * - 所有作品的 N 相同，所以直接比「總分和」（整數），等同比較未四捨五入的平均，沒有小數誤差。
+   * - 名次「1、2、2、4」；同分群組要主辦方決定先後（或並列）並填理由，才算可以公布。
+   */
+  async function computeRanking(c) {
+    const N = c.judge_count;
+    const [teams, locks, scores, accounts, decisions, versions] = await Promise.all([
+      db.listTeams(c.id), db.listLocks(c.id), db.listScores(c.id), db.listAccounts(c.id), db.listTieDecisions(c.id), db.listVersions(c.id)]);
+    const name = id => (accounts.find(a => a.id === id) || {}).display_name || '';
+    const rows = locks.map(l => {
+      const t = teams.find(x => x.id === l.team_id);
+      const v = versions.find(x => x.id === l.version_id) || {};
+      const subs = scores.filter(s => s.team_id === t.id && s.status === 'submitted' && s.slot_no <= N).sort((a, b) => a.slot_no - b.slot_no);
+      const sum = subs.reduce((s, x) => s + x.total, 0);
+      return {
+        teamId: t.id, code: t.code, name: t.name, workTitle: t.work_title, versionNo: v.version_no,
+        complete: subs.length === N, submitted: subs.length, sum: subs.length === N ? sum : null,
+        average: subs.length === N ? sum / N : null,
+        judges: subs.map(s => ({ slot: s.slot_no, judge: name(s.account_id), total: s.total, items: s.items || {}, strengths: s.strengths, improvements: s.improvements })),
+        rank: null, tied: false,
+      };
+    });
+    const done = rows.filter(r => r.complete).sort((a, b) => b.sum - a.sum || a.code.localeCompare(b.code));
+    const incomplete = rows.filter(r => !r.complete).sort((a, b) => a.code.localeCompare(b.code));
+    const ties = [];
+    let i = 0;
+    while (i < done.length) {
+      let k = i;
+      while (k + 1 < done.length && done[k + 1].sum === done[i].sum) k++;
+      const group = done.slice(i, k + 1);
+      const start = i + 1;
+      if (group.length === 1) {
+        group[0].rank = start;
+      } else {
+        const ids = group.map(g => g.teamId);
+        const d = decisions.filter(x => sameSet(x.team_ids, ids)).sort((a, b) => Number(b.seq) - Number(a.seq))[0] || null;   // 最後一筆為準
+        const order = d && Array.isArray(d.ordering) && sameSet(d.ordering, ids) ? d.ordering : null;
+        if (order) {
+          order.forEach((id, n) => { const g = group.find(x => x.teamId === id); g.rank = start + n; g.tieBroken = true; });
+          group.sort((a, b) => a.rank - b.rank);
+          done.splice(i, group.length, ...group);
+        } else {
+          group.forEach(g => { g.rank = start; g.tied = true; });
+        }
+        ties.push({
+          teamIds: ids, codes: group.map(g => g.code), sum: group[0].sum, average: group[0].average, rank: start,
+          decision: d ? { type: order ? 'order' : 'tied', order: order ? order.map(id => rows.find(r => r.teamId === id).code) : null,
+            reason: d.reason, by: name(d.decided_by), at: d.decided_at } : null,
+        });
+      }
+      i = k + 1;
+    }
+    const pendingTies = ties.filter(t => !t.decision).length;
+    return { judgeCount: N, rows: done, incomplete, ties, pendingTies, ready: !incomplete.length && !pendingTies && done.length > 0 };
+  }
+
+  async function adminRanking(token) {
+    const acc = await auth(token, 'admin');
+    const c = await compOf(acc);
+    if (beforeJudging(c)) fail('還沒有開始評分');
+    const r = await computeRanking(c);
+    const pub = await db.getLivePublication(c.id);
+    return Object.assign(r, { phase: c.phase, phaseLabel: PHASE_LABEL[c.phase], publishedAt: pub ? pub.published_at : null,
+      items: (await rubricView(c)).items.map(i => ({ id: i.id, title: i.title, max: i.max })) });
+  }
+
+  async function adminDecideTie(token, teamIds, ordering, reason) {
+    const acc = await auth(token, 'admin');
+    const c = await compOf(acc);
+    if (c.phase !== 'settling') fail('只有「結算」階段可以處理同分');
+    reason = String(reason || '').trim();
+    if (!reason) fail('同分處理必須填寫理由');
+    if (reason.length > 500) fail('理由最多 500 字');
+    const r = await computeRanking(c);
+    const tie = r.ties.find(t => Array.isArray(teamIds) && sameSet(t.teamIds, teamIds));
+    if (!tie) fail('找不到這個同分群組（可能評分有變動，請重新整理）');
+    let value;
+    if (ordering === 'tied') value = { tied: true };
+    else if (Array.isArray(ordering) && sameSet(ordering, tie.teamIds) && new Set(ordering).size === ordering.length) value = ordering;
+    else fail('先後順序要包含這個同分群組的每一組，而且不能重複');
+    await db.insertTieDecision({ competition_id: c.id, team_ids: tie.teamIds, ordering: value, reason, decided_by: acc.id, decided_at: iso(now()) });
+    await log(acc, 'decide_tie', tie.codes.join('、'), { ordering: value === 'tied' || value.tied ? '並列' : ordering.map(id => r.rows.find(x => x.teamId === id).code), reason });
+    return { ok: true };
+  }
+
+  const csvCell = v => {
+    const s = v === null || v === undefined ? '' : String(v);
+    // 防止 Excel 把 =、+、-、@ 開頭的內容當成公式
+    const safe = /^[=+\-@]/.test(s) ? "'" + s : s;
+    return /[",\r\n]/.test(safe) ? '"' + safe.replace(/"/g, '""') + '"' : safe;
+  };
+
+  async function adminExportCsv(token) {
+    const acc = await auth(token, 'admin');
+    const c = await compOf(acc);
+    if (beforeJudging(c)) fail('還沒有開始評分');
+    const r = await computeRanking(c);
+    const head = ['名次', '並列', '組別代碼', '組別名稱', '作品名稱', '評分版本'];
+    for (let n = 1; n <= c.judge_count; n++) head.push(`評審${n}總分`, `評審${n}姓名`);
+    head.push('總分合計', '平均', '同分處理');
+    const tieNote = row => {
+      const t = r.ties.find(x => x.teamIds.includes(row.teamId));
+      if (!t) return '';
+      if (!t.decision) return `與 ${t.codes.filter(x => x !== row.code).join('、')} 同分，尚未處理`;
+      return `${t.decision.type === 'tied' ? '並列' : '順序 ' + t.decision.order.join(' > ')}；理由：${t.decision.reason}（${t.decision.by}）`;
+    };
+    const lines = [head];
+    r.rows.concat(r.incomplete).forEach(row => {
+      const line = [row.rank ?? '未完成', row.tied ? '是' : '', row.code, row.name, row.workTitle, row.versionNo ? 'v' + row.versionNo : ''];
+      for (let n = 1; n <= c.judge_count; n++) {
+        const j = row.judges.find(x => x.slot === n);
+        line.push(j ? j.total : '', j ? j.judge : '');
+      }
+      line.push(row.sum ?? '', row.average === null ? '' : row.average.toFixed(2), tieNote(row));
+      lines.push(line);
+    });
+    await log(acc, 'export_csv', '', { rows: lines.length - 1 });
+    const date = new Date(now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+    return { filename: `${c.name}_成績_${date}.csv`, csv: lines.map(l => l.map(csvCell).join(',')).join('\r\n') + '\r\n' };
+  }
+
+  async function adminPublish(token) {
+    const acc = await auth(token, 'admin');
+    const c = await compOf(acc);
+    if (c.phase !== 'settling') fail('只有「結算」階段可以公布');
+    const r = await computeRanking(c);
+    if (r.incomplete.length) fail(`還有 ${r.incomplete.length} 件作品的評分沒有收齊：${r.incomplete.map(x => x.code).join('、')}`);
+    if (r.pendingTies) fail(`還有 ${r.pendingTies} 組同分沒有處理`);
+    const rb = await rubricView(c);
+    const snapshot = {
+      judgeCount: c.judge_count, showItemScores: !!c.show_item_scores,
+      items: rb.items.map(i => ({ id: i.id, title: i.title, max: i.max })),
+      teams: r.rows.map(row => ({
+        rank: row.rank, tied: row.tied, tieBroken: !!row.tieBroken, code: row.code, name: row.name, workTitle: row.workTitle,
+        average: Math.round(row.average * 10000) / 10000,
+        judges: row.judges.map(j => ({ slot: j.slot, total: j.total, strengths: j.strengths, improvements: j.improvements, items: j.items })),
+      })),
+    };
+    await db.publishResults(c.id, acc.id, snapshot);   // 資料庫函式：再檢查一次收齊，並一次完成公布與切換階段
+    return { ok: true, teams: snapshot.teams.length };
+  }
+
+  async function adminRevoke(token, reason) {
+    const acc = await auth(token, 'admin');
+    const c = await compOf(acc);
+    if (c.phase !== 'published') fail('目前沒有公布中的結果');
+    if (!String(reason || '').trim()) fail('撤回必須填寫原因');
+    await db.revokePublication(c.id, acc.id, String(reason).trim().slice(0, 500));
+    return { ok: true };
+  }
+
   /* ───────────── 公開（免登入） ───────────── */
 
   /** 公布前的收件與資格狀態：只有組別、作品名稱、狀態，不含原因與分數 */
@@ -750,6 +912,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
       teams: (Array.isArray(s.teams) ? s.teams : []).map(t => ({
         rank: Number(t.rank) || null,
         tied: !!t.tied,
+        tieBroken: !!t.tieBroken,
         code: String(t.code || ''),
         name: String(t.name || ''),
         workTitle: String(t.workTitle || ''),
@@ -775,6 +938,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     adminJudgingPreview, adminSetPhase,
     judgeListWorks, judgeGetWork, judgeSaveDraft, judgeSubmit,
     adminListScores, adminGetScore, adminReturnScore,
+    adminRanking, adminDecideTie, adminExportCsv, adminPublish, adminRevoke,
     publicStatus, publicResults,
   };
 

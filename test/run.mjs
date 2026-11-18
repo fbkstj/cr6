@@ -527,16 +527,17 @@ console.log('P3 作品與資格審查');
 /* ═════════════ P4 評審評分 ═════════════ */
 
 /** 建立一個已經進入評分階段的競賽：team01、team02 通過，team03 不通過 */
-async function judgingSetup(judgeCount) {
+async function judgingSetup(judgeCount, { teams = 3, fail = ['team03'] } = {}) {
   const sha = c => c.repeat(64);
   const e = (team, c) => ({ team, version: 1, source_filename: team + '_v1.mov', source_sha256: sha(c), source_size: 1, duration_sec: 300,
     check_ok: true, check_notes: '', playback_path: `videos/${team}_v1.mp4`, playback_size: 1 });
-  const ctx = await setup({ judgeCount }, { siteBaseUrl: 'https://example.test/', fetchJson: async () => ({ versions: [e('team01', 'a'), e('team02', 'b'), e('team03', 'c')] }) });
+  const codes = Array.from({ length: teams }, (_, i) => 'team' + String(i + 1).padStart(2, '0'));
+  const ctx = await setup({ judgeCount, teams }, { siteBaseUrl: 'https://example.test/', fetchJson: async () => ({ versions: codes.map((c, i) => e(c, 'abcdef'[i])) }) });
   const admin = (await ctx.call('login', 'admin01', 'admin-pass-01')).token;
   await ctx.call('adminSyncVideos', admin);
   for (const t of (await ctx.call('adminGetBoard', admin)).teams) {
     await ctx.call('adminSetCurrentVersion', admin, t.id, t.versions[0].id);
-    await ctx.call('adminReview', admin, t.versions[0].id, t.code === 'team03' ? 'fail' : 'pass', t.code === 'team03' ? '有剪接' : '');
+    await ctx.call('adminReview', admin, t.versions[0].id, fail.includes(t.code) ? 'fail' : 'pass', fail.includes(t.code) ? '有剪接' : '');
   }
   await ctx.call('adminSetPhase', admin, 'collecting');
   await ctx.call('adminSetPhase', admin, 'judging');
@@ -740,6 +741,161 @@ console.log('P4 評審評分');
     assert.equal(r.judgeCount, 3);
     assert.equal(r.rows[0].cells.length, 3);
     assert.equal(r.completeWorks, 1);
+  });
+}
+
+/* ═════════════ P5 結算、同分、匯出、公布 ═════════════ */
+console.log('P5 結算與公布');
+{
+  const { db, call, expectErr, admin, judges, team, items } = await judgingSetup(5, { teams: 4, fail: [] });
+  const S = { 80: [32, 20, 20, 8], 90: [36, 22, 23, 9], 85: [34, 21, 22, 8], 81: [32, 21, 20, 8], 79: [32, 19, 20, 8] };
+  const give = async (code, totals) => {
+    for (let i = 0; i < totals.length; i++) await call('judgeSubmit', judges['j' + (i + 1)], team(code), { items: items(...S[totals[i]]), ...GOOD });
+  };
+  await give('team01', [80, 80, 80, 80, 80]);        // 400，平均 80
+  await give('team02', [90, 90, 90, 90]);            // 只有 4 份
+  await give('team03', [80, 80, 80, 80, 80]);        // 400，和 team01 同分
+  await give('team04', [81, 80, 80, 80, 79]);        // 81+80+80+80+79 = 400，也同分
+  const T = c => team(c);
+
+  await step('評分沒收齊不能進入結算，並列出缺幾份', async () => {
+    await expectErr(/team02（4\/5）/, 'adminSetPhase', admin, 'settling');
+  });
+
+  await step('排名預覽：只收到 4 份的作品標示待完成，不算平均', async () => {
+    const r = await call('adminRanking', admin);
+    const t2 = r.incomplete.find(x => x.code === 'team02');
+    assert.equal(t2.submitted, 4);
+    assert.equal(t2.average, null);
+    assert.equal(t2.rank, null);
+    assert.equal(r.ready, false);
+  });
+
+  await step('第 5 份送出後正確計算平均，可以進入結算', async () => {
+    await call('judgeSubmit', judges.j5, T('team02'), { items: items(...S[85]), ...GOOD });
+    const t2 = (await call('adminRanking', admin)).rows.find(x => x.code === 'team02');
+    assert.equal(t2.sum, 445);
+    assert.equal(t2.average, 89);
+    await call('adminSetPhase', admin, 'settling');
+  });
+
+  await step('同分：三組總分都是 400，名次 1、2、2、2，需要處理才能公布', async () => {
+    const r = await call('adminRanking', admin);
+    assert.deepEqual(r.rows.map(x => [x.code, x.rank, x.tied]), [['team02', 1, false], ['team01', 2, true], ['team03', 2, true], ['team04', 2, true]]);
+    assert.equal(r.ties.length, 1);
+    assert.deepEqual(r.ties[0].codes, ['team01', 'team03', 'team04']);
+    assert.equal(r.pendingTies, 1);
+    await expectErr(/還有 1 組同分沒有處理/, 'adminPublish', admin);
+  });
+
+  await step('同分處理：必填理由、群組要完全相同、順序不能重複', async () => {
+    const g = [T('team01'), T('team03'), T('team04')];
+    await expectErr(/必須填寫理由/, 'adminDecideTie', admin, g, 'tied', ' ');
+    await expectErr(/找不到這個同分群組/, 'adminDecideTie', admin, [T('team01'), T('team03')], 'tied', '理由');
+    await expectErr(/不能重複/, 'adminDecideTie', admin, g, [T('team01'), T('team01'), T('team03')], '理由');
+    await expectErr(/每一組/, 'adminDecideTie', admin, g, [T('team01'), T('team03'), T('team02')], '理由');
+  });
+
+  await step('決定先後：名次依主辦方決定排列，並保留理由與決定人', async () => {
+    await call('adminDecideTie', admin, [T('team04'), T('team01'), T('team03')], [T('team03'), T('team01'), T('team04')], '依「應用及整合性」分項總和較高者在前');
+    const r = await call('adminRanking', admin);
+    assert.deepEqual(r.rows.map(x => [x.code, x.rank, x.tied]), [['team02', 1, false], ['team03', 2, false], ['team01', 3, false], ['team04', 4, false]]);
+    assert.equal(r.ties[0].decision.type, 'order');
+    assert.equal(r.ties[0].decision.by, '主辦人員');
+    assert.equal(r.ready, true);
+  });
+
+  await step('匯出 CSV：每位評審總分與姓名、平均、名次、同分處理紀錄；防止公式注入', async () => {
+    await call('adminUpsertTeam', admin, { id: T('team04'), name: '=HYPERLINK("http://x")', workTitle: '作品, "四"' });
+    const { filename, csv } = await call('adminExportCsv', admin);
+    assert.match(filename, /成績_\d{4}-\d{2}-\d{2}\.csv$/);
+    const lines = csv.trim().split('\r\n');
+    assert.match(lines[0], /^名次,並列,組別代碼,組別名稱,作品名稱,評分版本,評審1總分,評審1姓名/);
+    assert.match(lines[0], /評審5總分,評審5姓名,總分合計,平均,同分處理$/);
+    assert.match(lines[1], /^1,,team02,/);
+    assert.match(lines[1], /,445,89\.00,$/);
+    assert.match(lines[2], /^2,,team03,.*順序 team03 > team01 > team04；理由：依「應用及整合性」/);
+    assert.ok(lines[4].includes(`"'=HYPERLINK(""http://x"")"`), '公式開頭要加單引號');
+    assert.ok(lines[4].includes('"作品, ""四"""'), '逗號與引號要正確跳脫');
+    assert.ok(lines[1].includes('測試評審1'), '主辦方匯出含評審姓名');
+  });
+
+  await step('公布前：公開頁看不到任何分數', async () => {
+    const r = await call('publicResults');
+    assert.equal(r.published, false);
+    assert.ok(!JSON.stringify(r).includes('445'));
+  });
+
+  await step('公布：公開結果有名次、平均、評審1～5 的評語，沒有評審姓名、沒有分項', async () => {
+    await call('adminPublish', admin);
+    const r = await call('publicResults');
+    assert.equal(r.published, true);
+    assert.deepEqual(r.teams.map(x => [x.code, x.rank]), [['team02', 1], ['team03', 2], ['team01', 3], ['team04', 4]]);
+    assert.deepEqual(r.teams.map(x => x.tieBroken), [false, true, true, true], '同分由主辦方決定先後的組別要標示');
+    assert.equal(r.teams[0].average, 89);
+    assert.deepEqual(r.teams[0].judges.map(j => j.label), ['評審1', '評審2', '評審3', '評審4', '評審5']);
+    assert.equal(r.teams[0].judges[0].strengths, GOOD.strengths);
+    assert.equal(r.items, null);
+    const text = JSON.stringify(r);
+    for (const leak of ['測試評審', 'judge0', '依「應用及整合性」', 'accountId']) assert.ok(!text.includes(leak), '不應出現 ' + leak);
+    assert.equal((await call('adminGetBoard', admin)).competition.phase, 'published');
+  });
+
+  await step('公布後：評審不能再評分、主辦方不能退回評分或改同分處理', async () => {
+    await expectErr(/目前不是評分階段/, 'judgeSubmit', judges.j1, T('team01'), { items: items(...S[80]), ...GOOD });
+    const sid = (await call('adminListScores', admin)).rows[0].cells[0].scoreId;
+    await expectErr(/目前階段不能退回/, 'adminReturnScore', admin, sid, '原因');
+    await expectErr(/只有「結算」階段/, 'adminDecideTie', admin, [T('team01'), T('team03'), T('team04')], 'tied', '理由');
+    await expectErr(/只有「結算」階段可以公布/, 'adminPublish', admin);
+  });
+
+  await step('公開結果是快照：之後資料庫的分數變動不會影響已公布的結果', async () => {
+    const saved = db._tables.scores.map(s => s.total);
+    db._tables.scores.forEach(s => { s.total = 0; });
+    const r = await call('publicResults');
+    assert.equal(r.teams[0].average, 89);
+    assert.equal(r.teams[0].judges[0].total, 90);
+    db._tables.scores.forEach((s, i) => { s.total = saved[i]; });
+  });
+
+  await step('撤回：必填原因；撤回後公開頁看不到結果，回到結算', async () => {
+    await expectErr(/必須填寫原因/, 'adminRevoke', admin, '');
+    await call('adminRevoke', admin, '同分處理方式需改為並列');
+    assert.equal((await call('publicResults')).published, false);
+    assert.equal((await call('adminGetBoard', admin)).competition.phase, 'settling');
+  });
+
+  await step('改成並列後重新公布：三組都是第 2 名並標示並列；設定顯示分項後公開結果帶分項', async () => {
+    await call('adminDecideTie', admin, [T('team01'), T('team03'), T('team04')], 'tied', '校方決定同分並列');
+    await call('adminUpdateCompetition', admin, { showItemScores: true });
+    await call('adminPublish', admin);
+    const r = await call('publicResults');
+    assert.deepEqual(r.teams.map(x => [x.code, x.rank, x.tied]), [['team02', 1, false], ['team01', 2, true], ['team03', 2, true], ['team04', 2, true]]);
+    assert.equal(r.items.length, 4);
+    assert.equal(Object.keys(r.teams[0].judges[0].items).length, 4);
+  });
+
+  await step('回到評分、退回改分後，舊的同分處理不再適用', async () => {
+    await call('adminRevoke', admin, '要請評審修改');
+    await call('adminSetPhase', admin, 'judging');
+    const row = (await call('adminListScores', admin)).rows.find(x => x.code === 'team04');
+    await call('adminReturnScore', admin, row.cells[0].scoreId, '請再確認');
+    await call('judgeSubmit', judges.j1, T('team04'), { items: items(...S[79]), ...GOOD });   // 81 → 79，總分 398
+    await call('adminSetPhase', admin, 'settling');
+    const r = await call('adminRanking', admin);
+    assert.equal(r.rows.find(x => x.code === 'team04').rank, 4);
+    assert.deepEqual(r.ties[0].codes, ['team01', 'team03']);
+    assert.equal(r.ties[0].decision, null, '群組變了，要重新處理');
+    assert.equal(r.ready, false);
+  });
+
+  await step('操作紀錄包含同分處理、匯出、公布、撤回', async () => {
+    const actions = (await call('adminLogs', admin)).map(l => l.action);
+    for (const a of ['decide_tie', 'export_csv', 'publish', 'revoke']) assert.ok(actions.includes(a), a);
+  });
+
+  await step('評審不能使用結算功能', async () => {
+    for (const fn of ['adminRanking', 'adminDecideTie', 'adminExportCsv', 'adminPublish', 'adminRevoke']) await expectErr(/不能使用此功能/, fn, judges.j1);
   });
 }
 

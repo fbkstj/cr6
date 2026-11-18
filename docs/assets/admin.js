@@ -14,7 +14,7 @@ const ACTION = {
   sync_videos: '同步影片清單', update_competition: '修改競賽設定', save_rubric: '修改評分表', assign_judge: '指派評審',
   replace_judge: '替補評審', clear_slot: '清空席位', create_team: '新增組別', update_team: '修改組別', delete_team: '刪除組別',
   set_received_at: '填寫收件時間', set_current_version: '設定正式版本', review: '資格審查', set_phase: '切換階段', lock_for_judging: '鎖定版本、開始評分',
-  judge_submit: '評審送出評分', return_score: '退回評分',
+  judge_submit: '評審送出評分', return_score: '退回評分', decide_tie: '同分處理', export_csv: '匯出 CSV', publish: '公布結果', revoke: '撤回公布',
 };
 const SCORE_CHIP = { none: '', draft: 'info', submitted: 'ok', returned: 'warn' };
 const HIST = { submit: '正式送出', return: '退回', resubmit: '修改後重新送出', reassign: '改派' };
@@ -40,7 +40,7 @@ function setTab(tab) {
 }
 
 function render() {
-  const views = { overview: viewOverview, works: viewWorks, scores: viewScores, judges: viewJudges, rubric: viewRubric, settings: viewSettings, logs: viewLogs };
+  const views = { overview: viewOverview, works: viewWorks, scores: viewScores, settle: viewSettle, judges: viewJudges, rubric: viewRubric, settings: viewSettings, logs: viewLogs };
   main.innerHTML = '';
   const out = views[S.tab]();
   if (typeof out === 'string') main.innerHTML = out;
@@ -55,8 +55,14 @@ function viewOverview() {
     setup: `<button class="btn primary" data-act="phase" data-to="collecting">開始收件審查</button>`,
     collecting: `<button class="btn" data-act="phase" data-to="setup">回到準備</button>
                  <button class="btn primary" data-act="preview-judging">開始評分（鎖定版本）…</button>`,
-    judging: `<span class="muted">評分進行中，請到「評分進度」查看每位評審的進度。結算與公布在下一階段（P5）完成。</span>
-              <button class="btn" data-act="goto" data-tab="scores">查看評分進度</button>`,
+    judging: `<span class="muted">評分進行中。所有作品收齊評分後，就可以進入結算。</span>
+              <button class="btn" data-act="goto" data-tab="scores">查看評分進度</button>
+              <button class="btn primary" data-act="goto" data-tab="settle">結算與公布</button>`,
+    settling: `<span class="muted">結算中：確認排名、處理同分後公布。</span>
+              <button class="btn primary" data-act="goto" data-tab="settle">結算與公布</button>`,
+    published: `<span class="muted">結果已公布。</span>
+              <a class="btn" href="results.html" target="_blank" rel="noopener">查看公開結果頁</a>
+              <button class="btn" data-act="goto" data-tab="settle">結算與公布</button>`,
   }[c.phase] || '';
   return `
   <div class="card stack">
@@ -273,6 +279,91 @@ async function openScore(id) {
   if (await busy(null, () => call('adminReturnScore', id, dialogValues['ret-reason'] || ''))) { toast('已退回'); render(); }
 }
 
+/* ───────────── 結算與公布（P5） ───────────── */
+const tieOrder = {};   // 同分群組目前在畫面上排的順序（群組 key → teamId 陣列）
+const tieKey = ids => ids.slice().sort().join(',');
+let lastRanking = null;
+
+function viewSettle() {
+  main.innerHTML = '<div class="card"><p class="muted">載入中…</p></div>';
+  call('adminRanking').then(r => { lastRanking = r; main.innerHTML = settleHtml(r); })
+    .catch(e => { main.innerHTML = `<div class="card notice">${esc(e.message)}</div>`; });
+  return null;
+}
+
+function settleHtml(r) {
+  const N = r.judgeCount;
+  const code = id => (r.rows.find(x => x.teamId === id) || {}).code;
+  const actions = {
+    judging: `<button class="btn primary" data-act="phase" data-to="settling" ${r.incomplete.length ? 'disabled' : ''}>進入結算</button>`,
+    settling: `<button class="btn" data-act="phase" data-to="judging">回到評分</button>
+               <button class="btn" data-act="export">匯出 CSV</button>
+               <button class="btn primary" data-act="publish" ${r.ready ? '' : 'disabled'}>公布結果…</button>`,
+    published: `<a class="btn" href="results.html" target="_blank" rel="noopener">查看公開結果頁</a>
+                <button class="btn" data-act="export">匯出 CSV</button>
+                <button class="btn danger" data-act="revoke">撤回公布…</button>`,
+  }[r.phase] || '';
+  const status = r.phase === 'published' ? `<div class="notice ok">已於 ${fmtTime(r.publishedAt)} 公布。要修改請先撤回。</div>`
+    : r.incomplete.length ? `<div class="notice warn">還有 ${r.incomplete.length} 件作品沒有收齊 ${N} 份評分：${r.incomplete.map(x => `${esc(x.code)}（${x.submitted}/${N}）`).join('、')}</div>`
+    : r.phase === 'judging' ? '<div class="notice ok">全部作品都已收齊評分，可以進入結算。</div>'
+    : r.pendingTies ? `<div class="notice warn">還有 ${r.pendingTies} 組同分需要處理，處理完才能公布。</div>`
+    : '<div class="notice ok">排名已確認，可以公布。</div>';
+  const ties = r.ties.map(t => {
+    const key = tieKey(t.teamIds);
+    if (!tieOrder[key]) tieOrder[key] = t.decision && t.decision.type === 'order' ? t.teamIds.slice().sort((a, b) => t.decision.order.indexOf(code(a)) - t.decision.order.indexOf(code(b))) : t.teamIds.slice();
+    const editable = r.phase === 'settling';
+    return `<div class="card" style="box-shadow:none" data-tie="${esc(key)}">
+      <div class="row" style="justify-content:space-between">
+        <b>同分：${t.codes.map(esc).join('、')}（總分 ${t.sum}，平均 ${t.average.toFixed(2)}）</b>
+        ${t.decision ? `<span class="chip ok">已處理：${t.decision.type === 'tied' ? '並列' : esc(t.decision.order.join(' > '))}</span>` : '<span class="chip warn">待處理</span>'}
+      </div>
+      ${t.decision ? `<div class="small muted">理由：${esc(t.decision.reason)}（${esc(t.decision.by)}，${fmtTime(t.decision.at)}）</div>` : ''}
+      ${editable ? `<div class="stack" style="margin-top:10px">
+        <div class="row">
+          <label class="check"><input type="radio" name="mode-${esc(key)}" value="order" ${!t.decision || t.decision.type === 'order' ? 'checked' : ''}> 決定先後</label>
+          <label class="check"><input type="radio" name="mode-${esc(key)}" value="tied" ${t.decision && t.decision.type === 'tied' ? 'checked' : ''}> 並列同名次</label>
+        </div>
+        <ol style="margin:0;padding-left:1.4em">${tieOrder[key].map((id, i) => `<li class="row" style="padding:2px 0">${esc(code(id))}
+          <button class="btn small" data-act="tie-up" data-key="${esc(key)}" data-i="${i}" ${i === 0 ? 'disabled' : ''}>上移</button></li>`).join('')}</ol>
+        <div><label for="reason-${esc(key)}">理由（必填，會寫進匯出檔與操作紀錄）</label><textarea id="reason-${esc(key)}" maxlength="500" style="min-height:56px"></textarea></div>
+        <div><button class="btn" data-act="tie-save" data-key="${esc(key)}">儲存同分處理</button></div>
+      </div>` : ''}
+    </div>`;
+  }).join('');
+  return `
+  <div class="card stack">
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0">結算與公布</h2><div class="row">${actions}</div></div>
+    ${status}
+    <p class="muted small" style="margin:0">平均 = ${N} 位評審總分的和 ÷ ${N}。名次比的是未四捨五入的平均；同分時由主辦方決定先後或並列，並填寫理由。</p>
+  </div>
+  ${r.ties.length ? `<div class="card stack"><h2>同分處理</h2>${ties}</div>` : ''}
+  <div class="card stack">
+    <h2>排名${r.phase === 'judging' ? '（預覽）' : ''}</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>名次</th><th>作品</th>${Array.from({ length: N }, (_, i) => `<th>評審${i + 1}</th>`).join('')}<th>總分和</th><th>平均</th></tr></thead>
+      <tbody>
+        ${r.rows.map(x => `<tr><td><b>${x.rank}</b>${x.tied ? ' <span class="chip warn">並列</span>' : ''}</td>
+          <td><b>${esc(x.code)}</b> ${esc(x.name)}<br><span class="muted small">${esc(x.workTitle)}</span></td>
+          ${Array.from({ length: N }, (_, i) => { const j = x.judges.find(y => y.slot === i + 1); return `<td>${j ? j.total : '—'}</td>`; }).join('')}
+          <td>${x.sum}</td><td><b>${x.average.toFixed(2)}</b></td></tr>`).join('')}
+        ${r.incomplete.map(x => `<tr class="muted"><td>—</td><td><b>${esc(x.code)}</b> ${esc(x.name)}</td>
+          ${Array.from({ length: N }, (_, i) => { const j = x.judges.find(y => y.slot === i + 1); return `<td>${j ? j.total : '—'}</td>`; }).join('')}
+          <td colspan="2"><span class="chip warn">待完成 ${x.submitted}/${N}</span></td></tr>`).join('')}
+      </tbody>
+    </table></div>
+  </div>`;
+}
+
+function downloadCsv(filename, csv) {
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });   // BOM：Excel 直接開不會亂碼
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
 /* ───────────── 評審與帳號 ───────────── */
 function viewJudges() {
   const c = S.board.competition;
@@ -402,9 +493,49 @@ main.addEventListener('click', async e => {
   if (el.tagName === 'A') e.preventDefault();
   const player = document.getElementById('player');
   switch (act) {
+    case 'export': {
+      const r = await busy(el, () => call('adminExportCsv'));
+      if (r) { downloadCsv(r.filename, r.csv); toast('已匯出 ' + r.filename); }
+      break;
+    }
+    case 'tie-up': {
+      const arr = tieOrder[el.dataset.key], i = Number(el.dataset.i);
+      [arr[i - 1], arr[i]] = [arr[i], arr[i - 1]];
+      const reason = main.querySelector(`[id="reason-${el.dataset.key}"]`).value;
+      main.innerHTML = settleHtml(lastRanking);
+      main.querySelector(`[id="reason-${el.dataset.key}"]`).value = reason;
+      break;
+    }
+    case 'tie-save': {
+      const key = el.dataset.key;
+      const box = main.querySelector(`[data-tie="${CSS.escape(key)}"]`);
+      const mode = box.querySelector('input[type=radio]:checked').value;
+      const reason = box.querySelector('textarea').value;
+      const ids = key.split(',');
+      if (await busy(el, () => call('adminDecideTie', ids, mode === 'tied' ? 'tied' : tieOrder[key], reason))) { toast('已儲存同分處理'); render(); }
+      break;
+    }
+    case 'publish': {
+      const r = lastRanking;
+      const ok = await confirmBox(`<h2>公布結果</h2>
+        <p>公布後，任何人都可以在公開結果頁看到 ${r.rows.length} 件作品的名次、平均與評審評語（評審只顯示為「評審1～${r.judgeCount}」）。</p>
+        <ol style="margin:0;padding-left:1.4em">${r.rows.slice(0, 5).map(x => `<li value="${x.rank}">${esc(x.code)} ${esc(x.name)}　${x.average.toFixed(2)}${x.tied ? '（並列）' : ''}</li>`).join('')}</ol>
+        ${r.rows.length > 5 ? `<p class="muted small">…共 ${r.rows.length} 件</p>` : ''}
+        <div class="notice warn">公布後評審不能再評分，主辦方也不能退回評分；要修改必須先撤回。</div>`, '確定公布');
+      if (!ok) return;
+      if (await busy(el, () => call('adminPublish'))) { toast('已公布結果'); await refresh(); }
+      break;
+    }
+    case 'revoke': {
+      const ok = await confirmBox(`<h2>撤回公布</h2><p>撤回後公開結果頁會立刻看不到結果，階段回到「結算」。</p>
+        <div class="field"><label for="rv-reason">撤回原因（必填）</label><textarea id="rv-reason" maxlength="500"></textarea></div>`, '確定撤回', true);
+      if (!ok) return;
+      if (await busy(el, () => call('adminRevoke', dialogValues['rv-reason'] || ''))) { toast('已撤回公布'); await refresh(); }
+      break;
+    }
     case 'phase': {
       const to = el.dataset.to;
-      const label = to === 'collecting' ? '開始收件審查' : '回到準備階段';
+      const label = { collecting: '開始收件審查', setup: '回到準備階段', settling: '進入結算', judging: '回到評分階段（可以再退回評分給評審修改）' }[to];
       if (!(await confirmBox(`<p>確定要${label}？</p>`))) return;
       if (await busy(el, () => call('adminSetPhase', to))) { toast('已切換階段'); await refresh(); }
       break;
@@ -548,7 +679,7 @@ try {
   await load();
   let tab = 'overview';
   try { tab = localStorage.getItem('contest.adminTab') || 'overview'; } catch (e) { /* 忽略 */ }
-  setTab(['overview', 'works', 'scores', 'judges', 'rubric', 'settings', 'logs'].includes(tab) ? tab : 'overview');
+  setTab(['overview', 'works', 'scores', 'settle', 'judges', 'rubric', 'settings', 'logs'].includes(tab) ? tab : 'overview');
 } catch (e) {
   main.innerHTML = `<div class="card notice bad">${esc(e.message)}</div>`;
 }

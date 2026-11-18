@@ -94,7 +94,11 @@ export function createDb(url, serviceKey) {
     insertAdminLog: async row => { must(await sb.from('admin_logs').insert(row)); },
     listAdminLogs: async (cid, n) => must(await sb.from('admin_logs').select('*').eq('competition_id', cid).order('id', { ascending: false }).limit(n)),
 
-    /* 公布 */
+    /* 同分處理與公布 */
+    listTieDecisions: async cid => must(await sb.from('tie_decisions').select('*').eq('competition_id', cid)),
+    insertTieDecision: async row => { must(await sb.from('tie_decisions').insert(row)); },
+    publishResults: async (cid, actor, snapshot) => must(await sb.rpc('publish_results', { p_competition: cid, p_actor: actor, p_snapshot: snapshot })),
+    revokePublication: async (cid, actor, reason) => { must(await sb.rpc('revoke_publication', { p_competition: cid, p_actor: actor, p_reason: reason })); },
     getLivePublication: async cid => one(await sb.from('publications').select('*').eq('competition_id', cid).is('revoked_at', null).limit(1)),
   };
 }
