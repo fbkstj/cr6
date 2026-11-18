@@ -6,22 +6,34 @@
 <title>評審評分</title>
 <link rel="stylesheet" href="assets/style.css">
 <script src="config.js"></script>
+<style>
+  .progress { height: 8px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
+  .progress > span { display: block; height: 100%; background: var(--accent); }
+  .works { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+  .work { display: flex; flex-direction: column; gap: 6px; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+  .work:hover { border-color: var(--accent); }
+  .score-layout { display: grid; gap: 16px; grid-template-columns: minmax(0, 1.45fr) minmax(320px, 1fr); align-items: start; }
+  .score-layout .video-col { position: sticky; top: 64px; }
+  @media (max-width: 900px) { .score-layout { grid-template-columns: 1fr; } .score-layout .video-col { position: static; } }
+  .item { padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .item:last-child { border-bottom: 0; }
+  .item-head { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+  .item-head input { width: 88px; text-align: right; font-size: 1.1rem; }
+  .total { font-size: 1.6rem; font-weight: 700; }
+  .counter { font-size: .8rem; color: var(--muted); text-align: right; }
+  .counter.short { color: var(--bad); }
+</style>
 </head>
 <body>
 <header class="topbar">
   <span class="title" id="compName">評審評分</span>
+  <span class="chip accent hidden" id="slotChip"></span>
   <span class="spacer"></span>
   <span class="muted small" id="who"></span>
+  <button class="btn small" id="pwBtn">修改密碼</button>
   <button class="btn small" id="logout">登出</button>
 </header>
-<main id="main"><div class="card"><p class="muted">評審評分頁面建置中（開發階段 P4）。</p></div></main>
-<script type="module">
-import { requireRole, logout, devBanner } from './assets/app.js';
-devBanner();
-document.getElementById('logout').addEventListener('click', logout);
-const me = await requireRole('judge');
-document.getElementById('compName').textContent = me.competition.name;
-document.getElementById('who').textContent = me.me.name + '（' + me.me.loginId + '）';
-</script>
+<main id="main"><p class="muted">載入中…</p></main>
+<script type="module" src="assets/judge.js"></script>
 </body>
 </html>

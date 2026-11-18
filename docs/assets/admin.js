@@ -14,7 +14,10 @@ const ACTION = {
   sync_videos: '同步影片清單', update_competition: '修改競賽設定', save_rubric: '修改評分表', assign_judge: '指派評審',
   replace_judge: '替補評審', clear_slot: '清空席位', create_team: '新增組別', update_team: '修改組別', delete_team: '刪除組別',
   set_received_at: '填寫收件時間', set_current_version: '設定正式版本', review: '資格審查', set_phase: '切換階段', lock_for_judging: '鎖定版本、開始評分',
+  judge_submit: '評審送出評分', return_score: '退回評分',
 };
+const SCORE_CHIP = { none: '', draft: 'info', submitted: 'ok', returned: 'warn' };
+const HIST = { submit: '正式送出', return: '退回', resubmit: '修改後重新送出', reassign: '改派' };
 const beforeJudging = () => ['setup', 'collecting'].includes(S.board.competition.phase);
 const chip = (label, kind) => `<span class="chip ${kind || ''}">${esc(label)}</span>`;
 
@@ -37,7 +40,7 @@ function setTab(tab) {
 }
 
 function render() {
-  const views = { overview: viewOverview, works: viewWorks, judges: viewJudges, rubric: viewRubric, settings: viewSettings, logs: viewLogs };
+  const views = { overview: viewOverview, works: viewWorks, scores: viewScores, judges: viewJudges, rubric: viewRubric, settings: viewSettings, logs: viewLogs };
   main.innerHTML = '';
   const out = views[S.tab]();
   if (typeof out === 'string') main.innerHTML = out;
@@ -52,7 +55,8 @@ function viewOverview() {
     setup: `<button class="btn primary" data-act="phase" data-to="collecting">開始收件審查</button>`,
     collecting: `<button class="btn" data-act="phase" data-to="setup">回到準備</button>
                  <button class="btn primary" data-act="preview-judging">開始評分（鎖定版本）…</button>`,
-    judging: `<span class="muted">評分進行中。評審評分與結算功能在下一階段（P4、P5）完成。</span>`,
+    judging: `<span class="muted">評分進行中，請到「評分進度」查看每位評審的進度。結算與公布在下一階段（P5）完成。</span>
+              <button class="btn" data-act="goto" data-tab="scores">查看評分進度</button>`,
   }[c.phase] || '';
   return `
   <div class="card stack">
@@ -218,6 +222,57 @@ async function newTeam() {
   if (r) { S.teamId = r.id; toast('已新增組別'); await refresh(); }
 }
 
+/* ───────────── 評分進度（P4） ───────────── */
+function viewScores() {
+  main.innerHTML = '<div class="card"><p class="muted">載入中…</p></div>';
+  call('adminListScores').then(r => {
+    if (!r.rows.length) {
+      main.innerHTML = `<div class="card notice">${['setup', 'collecting'].includes(r.phase) ? '還沒有開始評分。資格審查完成後，到「總覽」按「開始評分」。' : '沒有進入評分的作品。'}</div>`;
+      return;
+    }
+    const pct = Math.round(r.completeWorks / r.totalWorks * 100);
+    main.innerHTML = `
+    <div class="card stack">
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">評分進度</h2><b>收齊 ${r.completeWorks} / ${r.totalWorks} 件</b></div>
+      <div style="height:8px;background:var(--surface-2);border-radius:999px;overflow:hidden"><span style="display:block;height:100%;width:${pct}%;background:var(--accent)"></span></div>
+      <div class="stats">${r.judges.map(j => `<div class="stat"><span class="muted small">評審${j.slot}・${esc(j.name || '未指派')}</span><b>${j.done} / ${r.totalWorks}</b></div>`).join('')}</div>
+    </div>
+    <div class="card stack">
+      <p class="muted small" style="margin:0">點有分數的格子可以查看內容、更正歷程，或退回給評審修改。每件作品要收齊 ${r.judgeCount} 份「已送出」才會計算平均。</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>作品</th>${r.judges.map(j => `<th>評審${j.slot}</th>`).join('')}<th>收齊</th></tr></thead>
+        <tbody>${r.rows.map(row => `<tr>
+          <td><b>${esc(row.code)}</b> ${esc(row.name)}<br><span class="muted small">${esc(row.workTitle)}</span></td>
+          ${row.cells.map(c => `<td>${c.scoreId ? `<a href="#" data-act="score" data-id="${c.scoreId}">` : ''}<span class="chip ${SCORE_CHIP[c.status]}">${esc(c.label)}</span>${c.total !== null ? ` <b>${c.total}</b>` : ''}${c.scoreId ? '</a>' : ''}
+            ${c.judge ? `<div class="muted small">${esc(c.judge)}</div>` : ''}</td>`).join('')}
+          <td>${row.complete ? '<span class="chip ok">✓</span>' : `<span class="muted">${row.submitted} / ${r.judgeCount}</span>`}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+    </div>`;
+  }).catch(e => { main.innerHTML = `<div class="card notice bad">${esc(e.message)}</div>`; });
+  return null;
+}
+
+async function openScore(id) {
+  const d = await busy(null, () => call('adminGetScore', id));
+  if (!d) return;
+  const html = `<h2>${esc(d.team.code)} ${esc(d.team.name)}・評審${d.slot}</h2>
+    <div class="row"><span class="chip ${SCORE_CHIP[d.status]}">${esc(d.statusLabel)}</span><span class="muted small">${esc(d.judge)}${d.submittedAt ? '・送出 ' + fmtTime(d.submittedAt) : ''}</span></div>
+    <table><tbody>${d.rubric.items.map(it => `<tr><td>${esc(it.title)}</td><td style="text-align:right">${d.items[it.id] ?? '—'} / ${it.max}</td></tr>`).join('')}
+      <tr><th>總分</th><th style="text-align:right">${d.total ?? '—'}</th></tr></tbody></table>
+    <div><b>作品優點</b><div style="white-space:pre-wrap">${esc(d.strengths) || '<span class="muted">—</span>'}</div></div>
+    <div><b>改進建議</b><div style="white-space:pre-wrap">${esc(d.improvements) || '<span class="muted">—</span>'}</div></div>
+    ${d.history.length ? `<div><b>更正歷程</b><ul style="margin:.3em 0 0 1.2em;padding:0">${d.history.map(h =>
+      `<li class="small">${fmtTime(h.at)}　${esc(HIST[h.action] || h.action)}（${esc(h.actor)}）${h.total !== null && h.total !== undefined ? `　${h.total} 分` : ''}${h.reason ? `<br>原因：${esc(h.reason)}` : ''}</li>`).join('')}</ul></div>` : ''}`;
+  const btns = [{ label: '關閉', value: false, primary: !d.canReturn }];
+  if (d.canReturn) btns.push({ label: '退回給評審修改…', value: 'return', danger: true });
+  if ((await dialog(html, btns)) !== 'return') return;
+  const ok = await confirmBox(`<h2>退回評分</h2><p>退回後評審可以修改並重新送出，原本的分數會保留在更正歷程中。</p>
+    <div class="field"><label for="ret-reason">退回原因（評審看得到，必填）</label><textarea id="ret-reason" maxlength="500"></textarea></div>`, '確定退回', true);
+  if (!ok) return;
+  if (await busy(null, () => call('adminReturnScore', id, dialogValues['ret-reason'] || ''))) { toast('已退回'); render(); }
+}
+
 /* ───────────── 評審與帳號 ───────────── */
 function viewJudges() {
   const c = S.board.competition;
@@ -355,6 +410,8 @@ main.addEventListener('click', async e => {
       break;
     }
     case 'preview-judging': await previewJudging(el); break;
+    case 'goto': setTab(el.dataset.tab); break;
+    case 'score': await openScore(id); break;
     case 'open-team': S.teamId = id; S.versionId = null; S.draftTc = []; if (S.tab !== 'works') setTab('works'); else render(); break;
     case 'open-version': S.versionId = id; S.draftTc = []; render(); break;
     case 'new-team': await newTeam(); break;
@@ -491,7 +548,7 @@ try {
   await load();
   let tab = 'overview';
   try { tab = localStorage.getItem('contest.adminTab') || 'overview'; } catch (e) { /* 忽略 */ }
-  setTab(['overview', 'works', 'judges', 'rubric', 'settings', 'logs'].includes(tab) ? tab : 'overview');
+  setTab(['overview', 'works', 'scores', 'judges', 'rubric', 'settings', 'logs'].includes(tab) ? tab : 'overview');
 } catch (e) {
   main.innerHTML = `<div class="card notice bad">${esc(e.message)}</div>`;
 }

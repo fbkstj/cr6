@@ -12,7 +12,7 @@ const raise = msg => { const e = new Error(msg); e.userMessage = msg; throw e; }
 export function createMemDb() {
   const t = {
     competitions: [], accounts: [], rubrics: [], rubric_items: [], judge_slots: [], teams: [], video_versions: [],
-    team_current: [], reviews: [], judging_locks: [], login_fails: [], admin_logs: [], publications: [],
+    team_current: [], reviews: [], judging_locks: [], scores: [], score_history: [], login_fails: [], admin_logs: [], publications: [],
   };
   const clone = v => (v === undefined ? undefined : structuredClone(v));
   const strip = a => { if (!a) return null; const { password_hash, ...rest } = a; return Object.assign(clone(rest), { has_password: !!password_hash }); };
@@ -141,6 +141,74 @@ export function createMemDb() {
       c.phase = 'judging';
       t.admin_logs.push({ id: ++seq, competition_id: cid, actor, action: 'lock_for_judging', target: '', detail: { locked: pass.length, excluded }, at: nowIso() });
       return { locked: pass.length, excluded };
+    },
+
+    /* 評分 */
+    listScores: async cid => clone(t.scores.filter(s => s.competition_id === cid)),
+    getScore: async id => clone(t.scores.find(s => s.id === id) || null),
+    listScoreHistory: async ids => clone(t.score_history.filter(h => ids.includes(h.score_id))),
+
+    /** 同 SQL judge_save：檢查全部通過才寫入 */
+    judgeSave: async (teamId, accountId, items, strengths, improvements, submit) => {
+      const acc = t.accounts.find(a => a.id === accountId);
+      if (!acc) raise('找不到帳號');
+      const c = t.competitions.find(x => x.id === acc.competition_id);
+      if (!['judging', 'settling'].includes(c.phase)) raise('目前不是評分階段');
+      const slotRow = t.judge_slots.find(s => s.competition_id === c.id && s.account_id === accountId);
+      if (!slotRow) raise('你目前沒有被指派評審席位');
+      const team = t.teams.find(x => x.id === teamId && x.competition_id === c.id);
+      const lock = team && t.judging_locks.find(l => l.team_id === teamId);
+      if (!lock) raise('這件作品不在評分名單中');
+      const ritems = t.rubric_items.filter(i => i.rubric_id === c.rubric_id).sort((a, b) => a.sort - b.sort);
+      if (Object.keys(items || {}).some(k => !ritems.some(i => i.id === k))) raise('分數裡有不在評分表上的項目');
+      const clean = {};
+      let tot = 0;
+      for (const it of ritems) {
+        const v = (items || {})[it.id];
+        if (v === null || v === undefined) continue;
+        if (typeof v !== 'number' || !Number.isInteger(v)) raise(`「${it.title}」的分數要是整數`);
+        if (v < 0 || v > it.max_score) raise(`「${it.title}」的分數要在 0～${it.max_score} 之間`);
+        clean[it.id] = v;
+        tot += v;
+      }
+      strengths = String(strengths || '').trim();
+      improvements = String(improvements || '').trim();
+      if (strengths.length > 2000 || improvements.length > 2000) raise('評語最多 2000 字');
+      let s = t.scores.find(x => x.team_id === teamId && x.slot_no === slotRow.slot_no);
+      if (s && s.status === 'submitted') raise('已經正式送出，需要主辦方退回才能修改');
+      if (submit) {
+        const missing = ritems.length - Object.keys(clean).length;
+        if (missing) raise(`還有 ${missing} 個項目沒有給分`);
+        if ([...strengths].length < c.min_comment_chars) raise(`「作品優點」至少要 ${c.min_comment_chars} 個字`);
+        if ([...improvements].length < c.min_comment_chars) raise(`「改進建議」至少要 ${c.min_comment_chars} 個字`);
+      }
+      const prevReturned = !!s && s.status === 'returned';
+      const now = nowIso();
+      if (!s) {
+        s = { id: crypto.randomUUID(), competition_id: c.id, team_id: teamId, slot_no: slotRow.slot_no };
+        t.scores.push(s);
+      }
+      Object.assign(s, {
+        version_id: lock.version_id, account_id: accountId, items: clean,
+        status: submit ? 'submitted' : (prevReturned ? 'returned' : 'draft'),
+        total: submit ? tot : null, strengths, improvements, submitted_at: submit ? now : null, updated_at: now,
+      });
+      if (submit) t.score_history.push({ id: ++seq, score_id: s.id, action: prevReturned ? 'resubmit' : 'submit', snapshot: { items: clean, total: tot, strengths, improvements, account: accountId }, actor: accountId, reason: '', at: now });
+      return { status: s.status, total: s.total };
+    },
+
+    /** 同 SQL return_score */
+    returnScore: async (scoreId, actor, reason) => {
+      const s = t.scores.find(x => x.id === scoreId);
+      if (!s) raise('找不到這份評分');
+      const c = t.competitions.find(x => x.id === s.competition_id);
+      if (!['judging', 'settling'].includes(c.phase)) raise('目前階段不能退回評分');
+      if (s.status !== 'submitted') raise('只有已正式送出的評分可以退回');
+      if (!String(reason || '').trim()) raise('退回必須填寫原因');
+      const now = nowIso();
+      t.score_history.push({ id: ++seq, score_id: s.id, action: 'return', snapshot: { items: s.items, total: s.total, strengths: s.strengths, improvements: s.improvements, account: s.account_id }, actor, reason: String(reason).trim(), at: now });
+      Object.assign(s, { status: 'returned', submitted_at: null, total: null, updated_at: now });
+      t.admin_logs.push({ id: ++seq, competition_id: s.competition_id, actor, action: 'return_score', target: s.id, detail: { slot: s.slot_no, reason: String(reason).trim() }, at: now });
     },
 
     /* 登入失敗 */

@@ -134,5 +134,40 @@ lg === 1 ? ok('鎖版寫入操作紀錄') : bad('鎖版紀錄', lg);
 const fp = (await db.query(`select has_function_privilege('anon','lock_for_judging(uuid,uuid)','execute') a, has_function_privilege('anon','save_rubric(uuid,jsonb)','execute') b`)).rows[0];
 !fp.a && !fp.b ? ok('anon 不能執行鎖版與評分表函式') : bad('函式權限', JSON.stringify(fp));
 
+/* ───── P4：評分 ───── */
+// 目前狀態：競賽在 judging、評分表 3 項（應用 50／課程 30／創意 20）、team01 鎖定、team02 未進入評分、評審席位 1～5 = j[0..4]
+const rItems = (await db.query(`select id, title from rubric_items where rubric_id=$1 order by sort`, [rid])).rows;
+const sc = (a, b, c2) => JSON.stringify({ [rItems[0].id]: a, [rItems[1].id]: b, [rItems[2].id]: c2 });
+const save = (acct, team, it, s1, s2, submit) => db.query(`select judge_save($1,$2,$3::jsonb,$4,$5,$6) r`, [team, acct, it, s1, s2, submit]);
+const okText = '作品完整，操作展示清楚';
+await expectFail('未進入評分的作品不能評', `select judge_save($1,$2,'{}'::jsonb,'','',false)`, [tid2, j[0]], /不在評分名單/);
+const outsider = (await db.query(`insert into accounts(competition_id, login_id, display_name, role) values($1,'judge99','x','judge') returning id`, [cid])).rows[0].id;
+await expectFail('沒有席位的評審不能評', `select judge_save($1,$2,'{}'::jsonb,'','',false)`, [tid, outsider], /沒有被指派/);
+await expectFail('分數超過該項滿分被拒', `select judge_save($1,$2,$3::jsonb,'','',false)`, [tid, j[0], sc(51, 0, 0)], /0～50/);
+await expectFail('分數不是整數被拒', `select judge_save($1,$2,$3::jsonb,'','',false)`, [tid, j[0], sc(10.5, 0, 0)], /整數/);
+await expectFail('不在評分表上的項目被拒', `select judge_save($1,$2,$3::jsonb,'','',false)`, [tid, j[0], JSON.stringify({ [crypto.randomUUID()]: 1 })], /不在評分表上/);
+let r1 = (await save(j[0], tid, JSON.stringify({ [rItems[0].id]: 40 }), '', '', false)).rows[0].r;
+r1.status === 'draft' && r1.total === null ? ok('暫存可以只填一部分，不計總分') : bad('暫存', JSON.stringify(r1));
+await expectFail('正式送出要每項都給分', `select judge_save($1,$2,$3::jsonb,$4,$4,true)`, [tid, j[0], JSON.stringify({ [rItems[0].id]: 40 }), okText], /還有 2 個項目/);
+await expectFail('正式送出評語要達最少字數', `select judge_save($1,$2,$3::jsonb,'好','很好',true)`, [tid, j[0], sc(40, 20, 10)], /至少要 10 個字/);
+r1 = (await save(j[0], tid, sc(40, 25, 15), okText, '可以補充測試數據與對照組', true)).rows[0].r;
+r1.status === 'submitted' && r1.total === 80 ? ok('正式送出：總分由資料庫計算 = 80') : bad('送出', JSON.stringify(r1));
+await expectFail('送出後不能再改', `select judge_save($1,$2,$3::jsonb,$4,$4,false)`, [tid, j[0], sc(1, 1, 1), okText], /需要主辦方退回/);
+const sid = (await db.query(`select id from scores where team_id=$1 and slot_no=1`, [tid])).rows[0].id;
+await expectFail('退回必須填原因', `select return_score($1,$2,'  ')`, [sid, good], /必須填寫原因/);
+await expectOk('主辦方退回評分', `select return_score($1,$2,'第二項分數請再確認')`, [sid, good]);
+const rs = (await db.query(`select status, total, items from scores where id=$1`, [sid])).rows[0];
+rs.status === 'returned' && rs.total === null && Object.keys(rs.items).length === 3 ? ok('退回後狀態 returned、總分清空、分數保留供修改') : bad('退回', JSON.stringify(rs));
+await expectFail('已退回的不能再退回', `select return_score($1,$2,'x')`, [sid, good], /只有已正式送出/);
+r1 = (await save(j[0], tid, sc(40, 20, 15), okText, '可以補充測試數據與對照組', false)).rows[0].r;
+r1.status === 'returned' ? ok('退回後暫存仍維持「已退回」狀態') : bad('退回後暫存', JSON.stringify(r1));
+r1 = (await save(j[0], tid, sc(40, 20, 15), okText, '可以補充測試數據與對照組', true)).rows[0].r;
+r1.status === 'submitted' && r1.total === 75 ? ok('修改後重新送出 = 75') : bad('重送', JSON.stringify(r1));
+const hist = (await db.query(`select action, reason from score_history where score_id=$1 order by id`, [sid])).rows.map(h => h.action + (h.reason ? ':' + h.reason : ''));
+JSON.stringify(hist) === JSON.stringify(['submit', 'return:第二項分數請再確認', 'resubmit']) ? ok('更正歷程：submit → return（原因）→ resubmit') : bad('歷程', JSON.stringify(hist));
+await db.query(`insert into scores(competition_id, team_id, version_id, slot_no, account_id) values($1,$2,$3,9,$4)`, [cid, tid, vid, j[1]]).then(() => bad('席位 9', '應該失敗'), () => ok('席位編號超過 5 被資料庫拒絕'));
+const fp4 = (await db.query(`select has_function_privilege('anon','judge_save(uuid,uuid,jsonb,text,text,boolean)','execute') a, has_function_privilege('anon','return_score(uuid,uuid,text)','execute') b`)).rows[0];
+!fp4.a && !fp4.b ? ok('anon 不能執行評分與退回函式') : bad('函式權限', JSON.stringify(fp4));
+
 console.log(`\n通過 ${pass}，失敗 ${failN}`);
 process.exit(failN ? 1 : 0);

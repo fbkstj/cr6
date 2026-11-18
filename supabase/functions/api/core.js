@@ -562,6 +562,158 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     return { phase };
   }
 
+  /* ───────────── 評審評分（P4） ───────────── */
+
+  const SCORING_PHASES = ['judging', 'settling'];
+  const SCORE_LABEL = { none: '未評', draft: '暫存中', submitted: '已送出', returned: '被退回', others: '前任評審已完成' };
+
+  /** 從評審的角度看某一份評分：別人（前任評審）的內容一律不給看 */
+  function myView(score, acc) {
+    if (!score) return { status: 'none', mine: false };
+    if (score.account_id !== acc.id) {
+      return score.status === 'submitted' ? { status: 'others', mine: false } : { status: 'none', mine: false, inherited: score.status };
+    }
+    return { status: score.status, mine: true };
+  }
+
+  async function judgeSlot(acc, c) {
+    const s = (await db.listJudgeSlots(c.id)).find(x => x.account_id === acc.id);
+    return s ? s.slot_no : null;
+  }
+
+  async function judgeListWorks(token) {
+    const acc = await auth(token, 'judge');
+    const c = await compOf(acc);
+    const slot = await judgeSlot(acc, c);
+    const base = { phase: c.phase, phaseLabel: PHASE_LABEL[c.phase], slot, judgeCount: c.judge_count, works: [] };
+    if (!slot) return Object.assign(base, { message: '你目前沒有被指派評審席位，請聯絡主辦單位' });
+    if (!['judging', 'settling', 'published'].includes(c.phase)) return Object.assign(base, { message: '還沒有開始評分，請等候主辦單位通知' });
+    const [teams, locks, versions, scores] = await Promise.all([db.listTeams(c.id), db.listLocks(c.id), db.listVersions(c.id), db.listScores(c.id)]);
+    const works = locks.map(l => {
+      const t = teams.find(x => x.id === l.team_id);
+      const v = versions.find(x => x.id === l.version_id) || {};
+      const sv = myView(scores.find(s => s.team_id === l.team_id && s.slot_no === slot), acc);
+      const sc = sv.mine ? scores.find(s => s.team_id === l.team_id && s.slot_no === slot) : null;
+      return { teamId: t.id, code: t.code, name: t.name, workTitle: t.work_title, duration: v.duration_sec === null ? null : Number(v.duration_sec),
+        status: sv.status, statusLabel: SCORE_LABEL[sv.status], total: sc && sc.status === 'submitted' ? sc.total : null };
+    }).sort((a, b) => a.code.localeCompare(b.code));
+    const done = works.filter(w => w.status === 'submitted' || w.status === 'others').length;
+    return Object.assign(base, { works, done, canEdit: SCORING_PHASES.includes(c.phase) });
+  }
+
+  async function judgeGetWork(token, teamId) {
+    const acc = await auth(token, 'judge');
+    const c = await compOf(acc);
+    const slot = await judgeSlot(acc, c);
+    if (!slot) fail('你目前沒有被指派評審席位');
+    if (!['judging', 'settling', 'published'].includes(c.phase)) fail('還沒有開始評分');
+    const lock = (await db.listLocks(c.id)).find(l => l.team_id === teamId);
+    if (!lock) fail('這件作品不在評分名單中');
+    const t = await db.getTeam(teamId);
+    const v = await db.getVersion(lock.version_id);
+    const score = (await db.listScores(c.id)).find(s => s.team_id === teamId && s.slot_no === slot) || null;
+    const sv = myView(score, acc);
+    let returnReason = '';
+    if (score && score.status === 'returned') {
+      const h = (await db.listScoreHistory([score.id])).filter(x => x.action === 'return').sort((a, b) => b.id - a.id)[0];
+      returnReason = h ? h.reason : '';
+    }
+    const mine = sv.mine ? score : null;
+    return {
+      team: { id: t.id, code: t.code, name: t.name, workTitle: t.work_title, workDesc: t.work_desc },
+      video: { path: v.playback_path, duration: v.duration_sec === null ? null : Number(v.duration_sec), versionNo: v.version_no },
+      rubric: await rubricView(c),
+      minCommentChars: c.min_comment_chars,
+      slot,
+      score: {
+        status: sv.status, statusLabel: SCORE_LABEL[sv.status],
+        items: mine ? mine.items || {} : {}, total: mine && mine.status === 'submitted' ? mine.total : null,
+        strengths: mine ? mine.strengths : '', improvements: mine ? mine.improvements : '',
+        submittedAt: mine ? mine.submitted_at : null,
+        returnReason: sv.mine || sv.inherited === 'returned' ? returnReason : '',
+        note: sv.status === 'others' ? '這件作品已由前任評審完成評分，你不需要再評。'
+          : sv.inherited ? '這個席位原本由其他評審負責，請重新完整評分。' : '',
+      },
+      canEdit: SCORING_PHASES.includes(c.phase) && sv.status !== 'submitted' && sv.status !== 'others',
+    };
+  }
+
+  async function judgeSaveScore(token, teamId, data, submit) {
+    const acc = await auth(token, 'judge');
+    data = data || {};
+    const items = data.items && typeof data.items === 'object' && !Array.isArray(data.items) ? data.items : {};
+    const clean = {};
+    Object.entries(items).forEach(([k, v]) => {
+      if (v === '' || v === null || v === undefined) return;
+      const n = Number(v);
+      if (!Number.isFinite(n)) fail('分數要是數字');
+      clean[k] = n;
+    });
+    // 先在這裡去掉頭尾空白（含全形空白）；Postgres 的 trim() 不會去掉全形空白
+    const r = await db.judgeSave(teamId, acc.id, clean, String(data.strengths || '').trim(), String(data.improvements || '').trim(), !!submit);
+    if (submit) {
+      const t = await db.getTeam(teamId);
+      await log(acc, 'judge_submit', t ? t.code : teamId, { total: r.total });
+    }
+    return { status: r.status, statusLabel: SCORE_LABEL[r.status], total: r.total };
+  }
+  const judgeSaveDraft = (token, teamId, data) => judgeSaveScore(token, teamId, data, false);
+  const judgeSubmit = (token, teamId, data) => judgeSaveScore(token, teamId, data, true);
+
+  /* ───────────── 主辦方：評分進度與退回（P4） ───────────── */
+
+  async function adminListScores(token) {
+    const acc = await auth(token, 'admin');
+    const c = await compOf(acc);
+    const [teams, locks, scores, slots, accounts] = await Promise.all([
+      db.listTeams(c.id), db.listLocks(c.id), db.listScores(c.id), db.listJudgeSlots(c.id), db.listAccounts(c.id)]);
+    const name = id => (accounts.find(a => a.id === id) || {}).display_name || '';
+    const rows = locks.map(l => {
+      const t = teams.find(x => x.id === l.team_id);
+      const cells = [];
+      for (let n = 1; n <= c.judge_count; n++) {
+        const s = scores.find(x => x.team_id === t.id && x.slot_no === n);
+        cells.push(s ? { slot: n, scoreId: s.id, status: s.status, label: SCORE_LABEL[s.status], total: s.status === 'submitted' ? s.total : null, judge: name(s.account_id) }
+          : { slot: n, scoreId: null, status: 'none', label: SCORE_LABEL.none, total: null, judge: '' });
+      }
+      const submitted = cells.filter(x => x.status === 'submitted').length;
+      return { teamId: t.id, code: t.code, name: t.name, workTitle: t.work_title, cells, submitted, complete: submitted === c.judge_count };
+    }).sort((a, b) => a.code.localeCompare(b.code));
+    const judges = Array.from({ length: c.judge_count }, (_, i) => {
+      const s = slots.find(x => x.slot_no === i + 1);
+      return { slot: i + 1, name: s ? name(s.account_id) : '', done: rows.filter(r => r.cells[i].status === 'submitted').length };
+    });
+    return { phase: c.phase, judgeCount: c.judge_count, rows, judges, completeWorks: rows.filter(r => r.complete).length, totalWorks: rows.length };
+  }
+
+  async function adminGetScore(token, scoreId) {
+    const acc = await auth(token, 'admin');
+    const c = await compOf(acc);
+    const s = await db.getScore(scoreId);
+    if (!s || s.competition_id !== c.id) fail('找不到這份評分');
+    const accounts = await db.listAccounts(c.id);
+    const name = id => (accounts.find(a => a.id === id) || {}).display_name || '';
+    const t = await db.getTeam(s.team_id);
+    const hist = (await db.listScoreHistory([s.id])).sort((a, b) => a.id - b.id);
+    return {
+      id: s.id, team: { code: t.code, name: t.name }, slot: s.slot_no, judge: name(s.account_id), status: s.status, statusLabel: SCORE_LABEL[s.status],
+      items: s.items || {}, total: s.total, strengths: s.strengths, improvements: s.improvements, submittedAt: s.submitted_at,
+      rubric: await rubricView(c),
+      history: hist.map(h => ({ action: h.action, at: h.at, actor: name(h.actor), reason: h.reason, total: h.snapshot ? h.snapshot.total : null })),
+      canReturn: s.status === 'submitted' && SCORING_PHASES.includes(c.phase),
+    };
+  }
+
+  async function adminReturnScore(token, scoreId, reason) {
+    const acc = await auth(token, 'admin');
+    const c = await compOf(acc);
+    const s = await db.getScore(scoreId);
+    if (!s || s.competition_id !== c.id) fail('找不到這份評分');
+    if (!String(reason || '').trim()) fail('退回必須填寫原因');
+    await db.returnScore(s.id, acc.id, String(reason).trim().slice(0, 500));
+    return { ok: true };
+  }
+
   /* ───────────── 公開（免登入） ───────────── */
 
   /** 公布前的收件與資格狀態：只有組別、作品名稱、狀態，不含原因與分數 */
@@ -621,6 +773,8 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     adminGetBoard, adminUpdateCompetition, adminGetRubric, adminSaveRubric, adminAssignSlot,
     adminUpsertTeam, adminDeleteTeam, adminSetReceivedAt, adminSetCurrentVersion, adminReview,
     adminJudgingPreview, adminSetPhase,
+    judgeListWorks, judgeGetWork, judgeSaveDraft, judgeSubmit,
+    adminListScores, adminGetScore, adminReturnScore,
     publicStatus, publicResults,
   };
 

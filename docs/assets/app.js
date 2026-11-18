@@ -99,9 +99,10 @@ export function dialog(html, buttons = [{ label: '確定', value: true, primary:
       Object.keys(dialogValues).forEach(k => delete dialogValues[k]);
       d.querySelectorAll('input[id], textarea[id], select[id]').forEach(x => { dialogValues[x.id] = x.value; });
       d.close();
+      d.remove();   // 直接移除，不依賴 close 事件（背景分頁可能延後觸發）
       resolve(buttons[Number(i.dataset.i)].value);
     });
-    d.addEventListener('close', () => { d.remove(); resolve(undefined); });
+    d.addEventListener('close', () => { d.remove(); resolve(undefined); });   // 按 Esc 關閉
     d.showModal();
   });
 }

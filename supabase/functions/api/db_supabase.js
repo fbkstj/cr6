@@ -77,6 +77,14 @@ export function createDb(url, serviceKey) {
     insertReview: async row => { must(await sb.from('reviews').insert(row)); },
     lockForJudging: async (cid, actor) => must(await sb.rpc('lock_for_judging', { p_competition: cid, p_actor: actor })),
 
+    /* 評分 */
+    listScores: async cid => must(await sb.from('scores').select('*').eq('competition_id', cid)),
+    getScore: async id => one(await sb.from('scores').select('*').eq('id', id).limit(1)),
+    listScoreHistory: async ids => (ids.length ? must(await sb.from('score_history').select('*').in('score_id', ids)) : []),
+    judgeSave: async (teamId, accountId, items, strengths, improvements, submit) => must(await sb.rpc('judge_save', {
+      p_team: teamId, p_account: accountId, p_items: items, p_strengths: strengths, p_improvements: improvements, p_submit: submit })),
+    returnScore: async (scoreId, actor, reason) => { must(await sb.rpc('return_score', { p_score: scoreId, p_actor: actor, p_reason: reason })); },
+
     /* 登入失敗 */
     getLoginFail: async key => one(await sb.from('login_fails').select('*').eq('key', key).limit(1)),
     setLoginFail: async (key, count, until) => { must(await sb.from('login_fails').upsert({ key, count, until })); },

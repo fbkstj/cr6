@@ -524,4 +524,223 @@ console.log('P3 作品與資格審查');
   });
 }
 
+/* ═════════════ P4 評審評分 ═════════════ */
+
+/** 建立一個已經進入評分階段的競賽：team01、team02 通過，team03 不通過 */
+async function judgingSetup(judgeCount) {
+  const sha = c => c.repeat(64);
+  const e = (team, c) => ({ team, version: 1, source_filename: team + '_v1.mov', source_sha256: sha(c), source_size: 1, duration_sec: 300,
+    check_ok: true, check_notes: '', playback_path: `videos/${team}_v1.mp4`, playback_size: 1 });
+  const ctx = await setup({ judgeCount }, { siteBaseUrl: 'https://example.test/', fetchJson: async () => ({ versions: [e('team01', 'a'), e('team02', 'b'), e('team03', 'c')] }) });
+  const admin = (await ctx.call('login', 'admin01', 'admin-pass-01')).token;
+  await ctx.call('adminSyncVideos', admin);
+  for (const t of (await ctx.call('adminGetBoard', admin)).teams) {
+    await ctx.call('adminSetCurrentVersion', admin, t.id, t.versions[0].id);
+    await ctx.call('adminReview', admin, t.versions[0].id, t.code === 'team03' ? 'fail' : 'pass', t.code === 'team03' ? '有剪接' : '');
+  }
+  await ctx.call('adminSetPhase', admin, 'collecting');
+  await ctx.call('adminSetPhase', admin, 'judging');
+  const judges = {};
+  for (let i = 1; i <= 5; i++) judges['j' + i] = (await ctx.call('login', 'judge0' + i, 'judge-pass-0' + i)).token;
+  const board = await ctx.call('adminGetBoard', admin);
+  const team = code => board.teams.find(t => t.code === code).id;
+  const ids = board.rubric.items.map(i => i.id);
+  const items = (...v) => Object.fromEntries(ids.map((id, i) => [id, v[i]]));
+  return Object.assign(ctx, { admin, judges, team, ids, items, board });
+}
+const GOOD = { strengths: '作品完整，操作展示清楚', improvements: '可以補充測試數據與對照組' };
+
+console.log('P4 評審評分');
+{
+  // 評分開始前
+  const pre = await setup();
+  await step('評分開始前：評審清單是空的並顯示提示', async () => {
+    const t = (await pre.call('login', 'judge01', 'judge-pass-01')).token;
+    const r = await pre.call('judgeListWorks', t);
+    assert.equal(r.works.length, 0);
+    assert.match(r.message, /還沒有開始評分/);
+  });
+
+  const { db, call, expectErr, admin, judges, team, ids, items } = await judgingSetup(5);
+  const [j1, j2] = [judges.j1, judges.j2];
+
+  await step('評審只看到進入評分的作品（不通過的 team03 不在清單）', async () => {
+    const r = await call('judgeListWorks', j1);
+    assert.deepEqual(r.works.map(w => w.code), ['team01', 'team02']);
+    assert.equal(r.slot, 1);
+    assert.equal(r.done, 0);
+    assert.ok(r.works.every(w => w.status === 'none'));
+  });
+
+  await step('評分頁：影片是鎖定版本，評分表帶判準', async () => {
+    const w = await call('judgeGetWork', j1, team('team01'));
+    assert.equal(w.video.path, 'videos/team01_v1.mp4');
+    assert.equal(w.rubric.items.length, 4);
+    assert.equal(w.rubric.total, 100);
+    assert.equal(w.canEdit, true);
+    await expectErr(/不在評分名單/, 'judgeGetWork', j1, team('team03'));
+  });
+
+  await step('主辦方不能呼叫評審的評分功能、評審不能看評分進度', async () => {
+    await expectErr(/不能使用此功能/, 'judgeSubmit', admin, team('team01'), {});
+    await expectErr(/不能使用此功能/, 'adminListScores', j1);
+    await expectErr(/不能使用此功能/, 'adminReturnScore', j1, 'x', 'y');
+  });
+
+  await step('暫存：可以只填一部分；超過滿分、不是整數被拒', async () => {
+    const r = await call('judgeSaveDraft', j1, team('team01'), { items: { [ids[0]]: 35 }, strengths: '草稿' });
+    assert.equal(r.status, 'draft');
+    await expectErr(/0～40 之間/, 'judgeSaveDraft', j1, team('team01'), { items: { [ids[0]]: 41 } });
+    await expectErr(/整數/, 'judgeSaveDraft', j1, team('team01'), { items: { [ids[0]]: 3.5 } });
+    await expectErr(/分數要是數字/, 'judgeSaveDraft', j1, team('team01'), { items: { [ids[0]]: 'abc' } });
+    const w = await call('judgeGetWork', j1, team('team01'));
+    assert.equal(w.score.items[ids[0]], 35);
+    assert.equal(w.score.strengths, '草稿');
+  });
+
+  await step('正式送出：每項都要給分、評語要達最少字數', async () => {
+    await expectErr(/還有 3 個項目/, 'judgeSubmit', j1, team('team01'), { items: { [ids[0]]: 35 }, ...GOOD });
+    await expectErr(/作品優點」至少要 10 個字/, 'judgeSubmit', j1, team('team01'), { items: items(35, 20, 20, 8), strengths: '很好', improvements: GOOD.improvements });
+    await expectErr(/改進建議」至少要 10 個字/, 'judgeSubmit', j1, team('team01'), { items: items(35, 20, 20, 8), strengths: GOOD.strengths, improvements: '　'.repeat(12) });
+  });
+
+  await step('正式送出成功：總分由伺服器計算（不採用前端傳的總分）', async () => {
+    const r = await call('judgeSubmit', j1, team('team01'), { items: items(35, 20, 20, 8), total: 100, ...GOOD });
+    assert.equal(r.status, 'submitted');
+    assert.equal(r.total, 83);
+    const l = await call('judgeListWorks', j1);
+    assert.equal(l.done, 1);
+    assert.equal(l.works.find(w => w.code === 'team01').total, 83);
+  });
+
+  await step('送出後評審不能再改（暫存、送出都被擋）', async () => {
+    await expectErr(/需要主辦方退回/, 'judgeSaveDraft', j1, team('team01'), { items: items(1, 1, 1, 1) });
+    await expectErr(/需要主辦方退回/, 'judgeSubmit', j1, team('team01'), { items: items(1, 1, 1, 1), ...GOOD });
+    assert.equal((await call('judgeGetWork', j1, team('team01'))).canEdit, false);
+  });
+
+  await step('評審讀不到別人的評分（P1 延後的驗收項目）', async () => {
+    const w = await call('judgeGetWork', j2, team('team01'));
+    assert.equal(w.score.status, 'none');
+    assert.deepEqual(w.score.items, {});
+    const text = JSON.stringify(w) + JSON.stringify(await call('judgeListWorks', j2));
+    for (const leak of ['作品完整', '對照組', '"total":83', '測試評審1']) assert.ok(!text.includes(leak), '不應出現 ' + leak);
+  });
+
+  await step('主辦方評分進度：矩陣顯示每位評審的狀態與總分', async () => {
+    const r = await call('adminListScores', admin);
+    assert.equal(r.totalWorks, 2);
+    assert.equal(r.completeWorks, 0);
+    const row = r.rows.find(x => x.code === 'team01');
+    assert.deepEqual(row.cells.map(c => c.label), ['已送出', '未評', '未評', '未評', '未評']);
+    assert.equal(row.cells[0].total, 83);
+    assert.equal(row.cells[0].judge, '測試評審1');
+    assert.equal(r.judges[0].done, 1);
+  });
+
+  let sid;
+  await step('主辦方退回：必填原因、只有已送出的可以退回', async () => {
+    sid = (await call('adminListScores', admin)).rows.find(x => x.code === 'team01').cells[0].scoreId;
+    await expectErr(/必須填寫原因/, 'adminReturnScore', admin, sid, ' ');
+    await call('adminReturnScore', admin, sid, '「課程相關」分數與評語不一致，請再確認');
+    await expectErr(/只有已正式送出/, 'adminReturnScore', admin, sid, '再退一次');
+    const d = await call('adminGetScore', admin, sid);
+    assert.equal(d.status, 'returned');
+    assert.equal(d.canReturn, false);
+  });
+
+  await step('被退回：評審看到原因與原本的分數，可以修改後重新送出', async () => {
+    const w = await call('judgeGetWork', j1, team('team01'));
+    assert.equal(w.score.status, 'returned');
+    assert.match(w.score.returnReason, /課程相關/);
+    assert.equal(w.score.items[ids[1]], 20);
+    assert.equal(w.canEdit, true);
+    assert.equal((await call('judgeListWorks', j1)).done, 0, '被退回的不算完成');
+    await call('judgeSaveDraft', j1, team('team01'), { items: items(35, 15, 20, 8), ...GOOD });
+    assert.equal((await call('judgeGetWork', j1, team('team01'))).score.status, 'returned', '暫存後仍標示被退回');
+    const r = await call('judgeSubmit', j1, team('team01'), { items: items(35, 15, 20, 8), ...GOOD });
+    assert.equal(r.total, 78);
+  });
+
+  await step('更正歷程保留：送出 → 退回（原因、操作人）→ 重新送出', async () => {
+    const d = await call('adminGetScore', admin, sid);
+    assert.deepEqual(d.history.map(h => h.action), ['submit', 'return', 'resubmit']);
+    assert.equal(d.history[1].actor, '主辦人員');
+    assert.match(d.history[1].reason, /課程相關/);
+    assert.equal(d.history[0].total, 83);
+    assert.equal(d.history[2].total, 78);
+  });
+
+  await step('替補評審：前任已送出的不用再評、前任的暫存不會帶給替補者', async () => {
+    await call('judgeSubmit', j2, team('team01'), { items: items(30, 20, 20, 9), ...GOOD });
+    await call('judgeSaveDraft', j2, team('team02'), { items: { [ids[0]]: 30 }, strengths: '前任的草稿內容' });
+    const accs = await call('adminListAccounts', admin);
+    const sub = await call('adminUpsertAccount', admin, { loginId: 'judge06', name: '替補評審', role: 'judge' });
+    await call('adminAssignSlot', admin, 2, accs.find(a => a.loginId === 'judge05').id, '先移走 judge05')
+      .then(() => assert.fail('judge05 已經坐評審5，應該失敗'), () => {});
+    await call('adminAssignSlot', admin, 2, sub.account.id, '原評審請病假');
+    const j6 = (await call('login', 'judge06', sub.tempPassword)).token;
+    const l = await call('judgeListWorks', j6);
+    assert.deepEqual(l.works.map(w => w.status), ['others', 'none']);
+    const w1 = await call('judgeGetWork', j6, team('team01'));
+    assert.equal(w1.canEdit, false);
+    assert.match(w1.score.note, /前任評審完成/);
+    assert.ok(!JSON.stringify(w1).includes('作品完整'), '看不到前任的評語');
+    const w2 = await call('judgeGetWork', j6, team('team02'));
+    assert.deepEqual(w2.score.items, {});
+    assert.equal(w2.score.strengths, '');
+    assert.match(w2.score.note, /重新完整評分/);
+    await call('judgeSubmit', j6, team('team02'), { items: items(33, 22, 22, 9), ...GOOD });
+    const cell = (await call('adminListScores', admin)).rows.find(x => x.code === 'team02').cells[1];
+    assert.equal(cell.judge, '替補評審');
+    assert.equal(cell.total, 86);
+  });
+
+  await step('被換下的評審沒有席位，不能再評分', async () => {
+    await expectErr(/沒有被指派評審席位/, 'judgeSubmit', j2, team('team02'), { items: items(1, 1, 1, 1), ...GOOD });
+    assert.match((await call('judgeListWorks', j2)).message, /沒有被指派/);
+  });
+
+  await step('前任評審的評分被退回：由席位目前的評審重新評分', async () => {
+    const s = (await call('adminListScores', admin)).rows.find(x => x.code === 'team01').cells[1];
+    await call('adminReturnScore', admin, s.scoreId, '分數有誤');
+    const j6 = (await call('login', 'judge06', (await call('adminResetPassword', admin, (await call('adminListAccounts', admin)).find(a => a.loginId === 'judge06').id)).tempPassword)).token;
+    const w = await call('judgeGetWork', j6, team('team01'));
+    assert.equal(w.canEdit, true);
+    assert.deepEqual(w.score.items, {}, '看不到前任的分數');
+    assert.match(w.score.returnReason, /分數有誤/);
+    await call('judgeSubmit', j6, team('team01'), { items: items(30, 20, 20, 10), ...GOOD });
+    const d = await call('adminGetScore', admin, s.scoreId);
+    assert.equal(d.judge, '替補評審');
+    assert.deepEqual(d.history.map(h => h.action), ['submit', 'return', 'resubmit']);
+  });
+
+  await step('收齊 5 份才算完成；評分進度正確', async () => {
+    for (const k of ['j3', 'j4', 'j5']) {
+      await call('judgeSubmit', judges[k], team('team01'), { items: items(30, 20, 20, 8), ...GOOD });
+    }
+    const r = await call('adminListScores', admin);
+    assert.equal(r.rows.find(x => x.code === 'team01').complete, true);
+    assert.equal(r.rows.find(x => x.code === 'team02').complete, false);
+    assert.equal(r.completeWorks, 1);
+  });
+
+  await step('評審送出寫入操作紀錄', async () => {
+    const logs = await call('adminLogs', admin);
+    assert.ok(logs.some(l => l.action === 'judge_submit' && l.target === 'team01'));
+    assert.ok(logs.some(l => l.action === 'return_score'));
+  });
+
+  await step('3 位評審模式：只有評審1～3，收齊 3 份就完成', async () => {
+    const s3 = await judgingSetup(3);
+    const r0 = await s3.call('judgeListWorks', s3.judges.j4);
+    assert.match(r0.message, /沒有被指派/, '評審4 在 3 人模式沒有席位');
+    for (const k of ['j1', 'j2', 'j3']) await s3.call('judgeSubmit', s3.judges[k], s3.team('team01'), { items: s3.items(40, 25, 25, 10), ...GOOD });
+    const r = await s3.call('adminListScores', s3.admin);
+    assert.equal(r.judgeCount, 3);
+    assert.equal(r.rows[0].cells.length, 3);
+    assert.equal(r.completeWorks, 1);
+  });
+}
+
 console.log(`\n全部通過：${passed} 項`);
