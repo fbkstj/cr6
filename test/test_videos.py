@@ -127,20 +127,20 @@ def main() -> int:
 
         t7 = v[('team07', 1)]
         assert t7['check_ok'] and t7['rotation'] in (90, 270), t7
-        assert t7['playback_width'] == 720 and t7['playback_height'] == 1280, t7
+        assert t7['playback_width'] == 1080 and t7['playback_height'] == 1920, t7
         r = pv.probe(out / 'team07_v1.mp4')
         vs = next(s for s in r['streams'] if s['codec_type'] == 'video')
         assert pv.rotation_of(vs) == 0, '播放版不應再帶旋轉標記'
-        ok('直式影片轉正：播放版 720x1280，沒有殘留旋轉標記')
+        ok('直式影片轉正：播放版保留 1080x1920，沒有殘留旋轉標記')
 
         t8 = v[('team08', 1)]
-        assert t8['check_ok'] and t8['playback_width'] == 1280 and t8['playback_height'] == 720, t8
+        assert t8['check_ok'] and t8['playback_width'] == 1920 and t8['playback_height'] == 1080, t8
         pb = out / 'team08_v1.mp4'
         p = pv.probe(pb)
         assert abs(float(p['format']['duration']) - t8['duration_sec']) <= 0.1
         codecs = sorted(s['codec_name'] for s in p['streams'])
         assert codecs == ['aac', 'h264'], codecs
-        ok('MOV 轉成 H.264／AAC 的 MP4，1080p 縮成 720p，時長一致')
+        ok('MOV 轉成 H.264／AAC 的 MP4，保留 1080p 原解析度，時長一致')
 
         fl, bp = flash_times(pb, tmp), beep_times(pb)
         assert len(fl) >= 19, f'白閃次數太少：{len(fl)}'
@@ -201,13 +201,17 @@ def main() -> int:
         assert (nl_out / 'team11_v1.mp4').exists()
         ok('測試模式：10:01 的影片照樣轉檔，清單註記「測試模式未擋」')
 
-        for minutes in (30, 60):
+        expect = {6: 1080, 10: 1080, 15: 720, 30: 480}   # 解析度優先：碼率真的不夠才降
+        for minutes, res in expect.items():
             ps = pv.encode_passes(minutes * 60)
             mb = (int(ps[0]['maxrate'].rstrip('k')) + ps[0]['audio']) * 1000 * minutes * 60 / 8 / 1048576
-            assert ps and mb < pv.MAX_OUTPUT_MB, (minutes, ps)
-            ok(f'{minutes} 分鐘影片：{ps[0]["short"]}p、影像 {ps[0]["maxrate"]}、音訊 {ps[0]["audio"]}k，最大約 {mb:.0f} MB')
-        assert pv.encode_passes(10 * 3600) == []
-        ok('超長影片（10 小時）連最低碼率都裝不下時明確回報，不會產生超過 95 MB 的檔案')
+            assert ps and mb < pv.MAX_OUTPUT_MB and ps[0]['short'] == res, (minutes, ps)
+            ok(f'{minutes} 分鐘影片：{ps[0]["short"]}p、影像 {ps[0]["maxrate"]}、音訊 {ps[0]["audio"]}k，最大約 {mb:.0f} MB（上限 {pv.MAX_OUTPUT_MB} MB）')
+        assert pv.encode_passes(300, 720)[0]['short'] == 720, '原檔 720p 不會被放大'
+        assert pv.encode_passes(300, 2160)[0]['short'] == 1080, '4K 原檔縮到 1080p'
+        ok('不放大：720p 原檔維持 720p；4K 原檔縮到 1080p')
+        assert pv.encode_passes(60 * 60) == []
+        ok(f'超長影片（60 分鐘）連最低碼率都裝不下時明確回報，不會產生超過 {pv.MAX_OUTPUT_MB} MB 的檔案')
 
         print('壓力測試：15 秒全畫面雜訊（最難壓縮）…')
         noise_src = tmp / 'noise'
@@ -220,7 +224,7 @@ def main() -> int:
         t10 = vn[('team10', 1)]
         assert t10['check_ok'], t10
         kbps = t10['playback_size'] * 8 / 1000 / t10['duration_sec']
-        limit = int(pv.encode_passes(t10['duration_sec'])[0]['maxrate'].rstrip('k')) + pv.AUDIO_KBPS
+        limit = int(pv.encode_passes(t10['duration_sec'], 720)[0]['maxrate'].rstrip('k')) + pv.AUDIO_KBPS
         assert kbps <= limit * 1.1, f'實際 {kbps:.0f} kbps 超過上限 {limit} kbps'
         ok(f'雜訊畫面實際 {kbps:.0f} kbps，有被碼率上限 {limit} kbps 擋住')
     finally:

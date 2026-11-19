@@ -6,7 +6,7 @@
     python tools/process_videos.py --only team01 只處理某一組
 
 檔名規則：teamNN_vK.mp4 或 teamNN_vK.mov（例如 team01_v1.mov；補件就是 team01_v2.mov）。
-輸出：docs/videos/teamNN_vK.mp4 與 docs/videos/manifest.json。腳本不會 git push，請確認報告後再推送。
+輸出：docs/videos/teamNN_vK.mp4（H.264／AAC，保留原檔解析度最高 1080p，每支 ≤ 75 MB）與 docs/videos/manifest.json。腳本不會 git push，請確認報告後再推送。
 設計依據：開發計畫書.md 第 10 節。
 """
 from __future__ import annotations
@@ -25,33 +25,37 @@ from pathlib import Path
 # ───── 試辦值（開發計畫書第 15 節） ─────
 MAX_SOURCE_MB = 500          # 原檔容量上限
 MAX_DURATION_SEC = 600.0     # 最長 10:00（含）；時長四捨五入到 0.1 秒後比較
-SHORT_SIDE = 720             # 播放版短邊（不放大）
-MAX_OUTPUT_MB = 95           # GitHub 單檔上限 100 MB，留一點空間
+SHORT_SIDE = 1080            # 播放版短邊上限：保留原檔解析度，最高 1080p（不放大）
+MAX_OUTPUT_MB = 75           # 播放版容量上限（老師 2026-11-19 指定；GitHub 單檔上限 100 MB）
 DURATION_TOLERANCE = 0.5     # 播放版與原檔時長容許差距（秒）
-MAX_VIDEO_KBPS = 1500        # 播放版影像碼率上限
+MAX_VIDEO_KBPS = 8000        # 播放版影像碼率上限（畫質主要由 crf 決定，這只是保險）
 AUDIO_KBPS = 128
-
-
 MIN_VIDEO_KBPS = 120         # 再低畫面就看不清楚
-LOW_RES_BELOW_KBPS = 600     # 碼率低於這個值時改用 480p，畫面比較清楚
+# 解析度優先：可用的影像碼率要低於門檻（容量真的不夠）才降解析度（老師 2026-11-19：畫質盡量維持高解析度）
+RES_MIN_KBPS = [(1080, 800), (720, 400), (480, 0)]
 
 
-def encode_passes(duration: float) -> list[dict]:
-    """依影片長度算碼率上限，讓播放版一定小於 MAX_OUTPUT_MB（10 分鐘約 1.1 Mbps）。
-    第一次品質優先（crf 26），萬一還是太大，第二次降到 70% 碼率重轉。
-    很長的影片（測試模式不限長度）碼率不夠時，改用 480p、音訊降到 64k；
-    連最低碼率都裝不下時回傳空清單（交給呼叫端報錯）。"""
+def encode_passes(duration: float, src_short: int = 1080) -> list[dict]:
+    """依影片長度算出能用的碼率，讓播放版一定小於 MAX_OUTPUT_MB。
+    解析度保留原檔（最高 1080p），只有碼率低於門檻時才降到 720p／480p。
+    第一次品質優先（crf 22），萬一還是太大，第二次降到 70% 碼率、crf 26 重轉。
+    很長的影片音訊降到 64k；連最低碼率都裝不下時回傳空清單（交給呼叫端報錯）。"""
     total = MAX_OUTPUT_MB * 0.92 * 8 * 1024 * 1024 / 1000 / max(duration, 1)   # 可用的總碼率（kbps）
-    audio = AUDIO_KBPS if total - AUDIO_KBPS >= LOW_RES_BELOW_KBPS else 64
+    audio = AUDIO_KBPS if total - AUDIO_KBPS >= 400 else 64
     budget = int(total) - audio
     if budget < MIN_VIDEO_KBPS:
         return []
     top = min(MAX_VIDEO_KBPS, budget)
     low = max(MIN_VIDEO_KBPS, int(top * 0.7))
-    short = SHORT_SIDE if top >= LOW_RES_BELOW_KBPS else 480
+    short = 480
+    for res, need in RES_MIN_KBPS:
+        if top >= need:
+            short = res
+            break
+    short = min(short, max(int(src_short or 0), 1)) if src_short else short   # 不放大
     return [
-        {'crf': '26', 'maxrate': f'{top}k', 'bufsize': f'{top * 2}k', 'short': short, 'audio': audio},
-        {'crf': '30', 'maxrate': f'{low}k', 'bufsize': f'{low * 2}k', 'short': short, 'audio': audio},
+        {'crf': '22', 'maxrate': f'{top}k', 'bufsize': f'{top * 2}k', 'short': short, 'audio': audio},
+        {'crf': '26', 'maxrate': f'{low}k', 'bufsize': f'{low * 2}k', 'short': short, 'audio': audio},
     ]
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -147,7 +151,7 @@ def check_source(path: Path, limits: bool = True) -> tuple[dict, list[str]]:
 
 
 def encode(src: Path, dst: Path, params: dict) -> subprocess.CompletedProcess:
-    # 先依旋轉標記轉正（ffmpeg 預設會做），再把短邊縮到 720（很長的影片 480），不放大
+    # 先依旋轉標記轉正（ffmpeg 預設會做），再把短邊縮到指定值（最高 1080），不放大
     short = params.get('short', SHORT_SIDE)
     vf = (f"scale='if(gt(iw,ih),-2,min({short},iw))':'if(gt(iw,ih),min({short},ih),-2)',"
           "format=yuv420p")
@@ -161,10 +165,10 @@ def encode(src: Path, dst: Path, params: dict) -> subprocess.CompletedProcess:
     ])
 
 
-def make_playback(src: Path, dst: Path, source_duration: float) -> tuple[dict, list[str]]:
+def make_playback(src: Path, dst: Path, source_duration: float, src_short: int = 1080) -> tuple[dict, list[str]]:
     tmp = dst.with_suffix('.tmp.mp4')
     last_problem = ''
-    passes = encode_passes(source_duration)
+    passes = encode_passes(source_duration, src_short)
     if not passes:
         return {}, [f'影片 {fmt_dur(source_duration)} 太長，播放版無法控制在 {MAX_OUTPUT_MB} MB 內']
     for params in passes:
@@ -271,7 +275,8 @@ def main(argv: list[str] | None = None) -> int:
             entry['check_notes'] = warn_text
         if not problems and not args.check_only:
             out_name = f'{team}_v{version}.mp4'
-            pb, enc_problems = make_playback(path, args.out / out_name, info['duration_sec'])
+            src_short = min(info.get('width') or 1080, info.get('height') or 1080)
+            pb, enc_problems = make_playback(path, args.out / out_name, info['duration_sec'], src_short)
             if enc_problems:
                 entry['check_ok'] = False
                 entry['check_notes'] = '；'.join(enc_problems)
