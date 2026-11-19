@@ -32,15 +32,26 @@ MAX_VIDEO_KBPS = 1500        # 播放版影像碼率上限
 AUDIO_KBPS = 128
 
 
+MIN_VIDEO_KBPS = 120         # 再低畫面就看不清楚
+LOW_RES_BELOW_KBPS = 600     # 碼率低於這個值時改用 480p，畫面比較清楚
+
+
 def encode_passes(duration: float) -> list[dict]:
     """依影片長度算碼率上限，讓播放版一定小於 MAX_OUTPUT_MB（10 分鐘約 1.1 Mbps）。
-    第一次品質優先（crf 26），萬一還是太大，第二次降到 70% 碼率重轉。"""
-    budget = int(MAX_OUTPUT_MB * 0.92 * 8 * 1024 * 1024 / 1000 / max(duration, 1)) - AUDIO_KBPS
-    top = max(200, min(MAX_VIDEO_KBPS, budget))
-    low = max(150, int(top * 0.7))
+    第一次品質優先（crf 26），萬一還是太大，第二次降到 70% 碼率重轉。
+    很長的影片（測試模式不限長度）碼率不夠時，改用 480p、音訊降到 64k；
+    連最低碼率都裝不下時回傳空清單（交給呼叫端報錯）。"""
+    total = MAX_OUTPUT_MB * 0.92 * 8 * 1024 * 1024 / 1000 / max(duration, 1)   # 可用的總碼率（kbps）
+    audio = AUDIO_KBPS if total - AUDIO_KBPS >= LOW_RES_BELOW_KBPS else 64
+    budget = int(total) - audio
+    if budget < MIN_VIDEO_KBPS:
+        return []
+    top = min(MAX_VIDEO_KBPS, budget)
+    low = max(MIN_VIDEO_KBPS, int(top * 0.7))
+    short = SHORT_SIDE if top >= LOW_RES_BELOW_KBPS else 480
     return [
-        {'crf': '26', 'maxrate': f'{top}k', 'bufsize': f'{top * 2}k'},
-        {'crf': '30', 'maxrate': f'{low}k', 'bufsize': f'{low * 2}k'},
+        {'crf': '26', 'maxrate': f'{top}k', 'bufsize': f'{top * 2}k', 'short': short, 'audio': audio},
+        {'crf': '30', 'maxrate': f'{low}k', 'bufsize': f'{low * 2}k', 'short': short, 'audio': audio},
     ]
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -80,14 +91,16 @@ def rotation_of(stream: dict) -> int:
     return rot % 360
 
 
-def check_source(path: Path) -> tuple[dict, list[str]]:
-    """回傳（影片資訊, 不合格原因清單）。原因清單是空的才算通過。"""
-    info: dict = {}
+def check_source(path: Path, limits: bool = True) -> tuple[dict, list[str]]:
+    """回傳（影片資訊, 不合格原因清單）。原因清單是空的才算通過。
+    limits=False（測試模式）：容量與長度超過上限只記在 info['warnings']，不算不合格。"""
+    info: dict = {'warnings': []}
     problems: list[str] = []
+    over = problems if limits else info['warnings']
     size = path.stat().st_size
     info['source_size'] = size
     if size > MAX_SOURCE_MB * 1024 * 1024:
-        problems.append(f'檔案 {size / 1024 / 1024:.0f} MB，超過上限 {MAX_SOURCE_MB} MB')
+        over.append(f'檔案 {size / 1024 / 1024:.0f} MB，超過上限 {MAX_SOURCE_MB} MB')
 
     p = probe(path)
     if p is None:
@@ -122,7 +135,7 @@ def check_source(path: Path) -> tuple[dict, list[str]]:
     if duration is None:
         problems.append('讀不到影片長度')
     elif round(duration, 1) > MAX_DURATION_SEC:
-        problems.append(f'長度 {fmt_dur(duration)}，超過 10:00')
+        over.append(f'長度 {fmt_dur(duration)}，超過 10:00')
 
     if not problems:
         # 完整解碼一次，確認中間沒有壞掉的片段
@@ -134,15 +147,16 @@ def check_source(path: Path) -> tuple[dict, list[str]]:
 
 
 def encode(src: Path, dst: Path, params: dict) -> subprocess.CompletedProcess:
-    # 先依旋轉標記轉正（ffmpeg 預設會做），再把短邊縮到 720（不放大）
-    vf = (f"scale='if(gt(iw,ih),-2,min({SHORT_SIDE},iw))':'if(gt(iw,ih),min({SHORT_SIDE},ih),-2)',"
+    # 先依旋轉標記轉正（ffmpeg 預設會做），再把短邊縮到 720（很長的影片 480），不放大
+    short = params.get('short', SHORT_SIDE)
+    vf = (f"scale='if(gt(iw,ih),-2,min({short},iw))':'if(gt(iw,ih),min({short},ih),-2)',"
           "format=yuv420p")
     return run([
         'ffmpeg', '-v', 'error', '-nostdin', '-y', '-i', str(src),
         '-map', '0:v:0', '-map', '0:a:0', '-vf', vf,
         '-c:v', 'libx264', '-preset', 'medium', '-crf', params['crf'],
         '-maxrate', params['maxrate'], '-bufsize', params['bufsize'], '-profile:v', 'high',
-        '-c:a', 'aac', '-b:a', f'{AUDIO_KBPS}k', '-ac', '2',
+        '-c:a', 'aac', '-b:a', f"{params.get('audio', AUDIO_KBPS)}k", '-ac', '2',
         '-movflags', '+faststart', str(dst),
     ])
 
@@ -150,7 +164,10 @@ def encode(src: Path, dst: Path, params: dict) -> subprocess.CompletedProcess:
 def make_playback(src: Path, dst: Path, source_duration: float) -> tuple[dict, list[str]]:
     tmp = dst.with_suffix('.tmp.mp4')
     last_problem = ''
-    for params in encode_passes(source_duration):
+    passes = encode_passes(source_duration)
+    if not passes:
+        return {}, [f'影片 {fmt_dur(source_duration)} 太長，播放版無法控制在 {MAX_OUTPUT_MB} MB 內']
+    for params in passes:
         r = encode(src, tmp, params)
         if r.returncode != 0:
             last_problem = '轉檔失敗：' + (r.stderr.strip().splitlines() or ['未知錯誤'])[-1][:160]
@@ -203,6 +220,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument('--out', type=Path, default=ROOT / 'docs' / 'videos', help='播放版輸出資料夾（預設：docs/videos/）')
     ap.add_argument('--only', help='只處理某一組，例如 team01')
     ap.add_argument('--check-only', action='store_true', help='只檢查，不轉檔、不改清單')
+    ap.add_argument('--no-limits', action='store_true', help='測試模式：容量與長度超過上限不擋，只在清單註記')
     args = ap.parse_args(argv)
 
     for tool in ('ffmpeg', 'ffprobe'):
@@ -239,7 +257,8 @@ def main(argv: list[str] | None = None) -> int:
             rows.append((path.name, '錯誤', f'{team}_v{version} 已經有別的檔案；補件請改用新的版本號（例如 _v{version + 1}）'))
             continue
 
-        info, problems = check_source(path)
+        info, problems = check_source(path, limits=not args.no_limits)
+        warnings = info.get('warnings', [])
         entry = {
             'team': team, 'version': version, 'source_filename': path.name, 'source_sha256': sha,
             'source_size': info.get('source_size'), 'duration_sec': info.get('duration_sec'),
@@ -247,6 +266,9 @@ def main(argv: list[str] | None = None) -> int:
             'width': info.get('width'), 'height': info.get('height'), 'rotation': info.get('rotation', 0),
             'check_ok': not problems, 'check_notes': '；'.join(problems), 'playback_path': None, 'playback_size': None,
         }
+        warn_text = ('（測試模式未擋）' + '；'.join(warnings)) if warnings else ''
+        if not problems and warn_text:
+            entry['check_notes'] = warn_text
         if not problems and not args.check_only:
             out_name = f'{team}_v{version}.mp4'
             pb, enc_problems = make_playback(path, args.out / out_name, info['duration_sec'])
@@ -259,14 +281,14 @@ def main(argv: list[str] | None = None) -> int:
         entry['processed_at'] = dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds')
         secs = time.time() - t0
         if args.check_only:
-            rows.append((path.name, '合格' if not problems else '不合格', '；'.join(problems) or f'長度 {fmt_dur(info.get("duration_sec"))}'))
+            rows.append((path.name, '合格' if not problems else '不合格', '；'.join(problems) or f'長度 {fmt_dur(info.get("duration_sec"))}，{info.get("vcodec")}／{info.get("acodec")}，{info.get("width")}x{info.get("height")}' + (f'，{warn_text}' if warn_text else '')))
             continue
         manifest['versions'].append(entry)
         by_sha[sha] = entry
         by_key[(team, version)] = entry
         save_manifest(manifest_path, manifest)   # 每處理完一支就存檔，中途中斷也不會遺失
         if entry['check_ok']:
-            rows.append((path.name, '完成', f'長度 {fmt_dur(entry["duration_sec"])}，原檔 {entry["source_size"] / 1048576:.0f} MB → 播放版 {entry["playback_size"] / 1048576:.1f} MB（{entry["playback_width"]}x{entry["playback_height"]}），{secs:.0f} 秒'))
+            rows.append((path.name, '完成', f'長度 {fmt_dur(entry["duration_sec"])}，原檔 {entry["source_size"] / 1048576:.0f} MB → 播放版 {entry["playback_size"] / 1048576:.1f} MB（{entry["playback_width"]}x{entry["playback_height"]}），{secs:.0f} 秒' + (f'；{warn_text}' if warn_text else '')))
         else:
             rows.append((path.name, '不合格', entry['check_notes']))
 

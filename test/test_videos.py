@@ -190,6 +190,25 @@ def main() -> int:
         assert est_mb < pv.MAX_OUTPUT_MB, est_mb
         ok(f'10 分鐘影片的碼率上限 {top} kbps，最大約 {est_mb:.0f} MB（< {pv.MAX_OUTPUT_MB} MB）')
 
+        # 測試模式（--no-limits）：超過 10:00 不擋，只在清單註記
+        nl_src, nl_out = tmp / 'nolimit', tmp / 'nolimit_out'
+        nl_src.mkdir()
+        clip(nl_src / 'team11_v1.mov', 601)
+        code, vn = run_script(nl_src, nl_out, '--no-limits')
+        t11 = vn[('team11', 1)]
+        assert code == 0 and t11['check_ok'], t11
+        assert '測試模式未擋' in t11['check_notes'] and '超過 10:00' in t11['check_notes'], t11['check_notes']
+        assert (nl_out / 'team11_v1.mp4').exists()
+        ok('測試模式：10:01 的影片照樣轉檔，清單註記「測試模式未擋」')
+
+        for minutes in (30, 60):
+            ps = pv.encode_passes(minutes * 60)
+            mb = (int(ps[0]['maxrate'].rstrip('k')) + ps[0]['audio']) * 1000 * minutes * 60 / 8 / 1048576
+            assert ps and mb < pv.MAX_OUTPUT_MB, (minutes, ps)
+            ok(f'{minutes} 分鐘影片：{ps[0]["short"]}p、影像 {ps[0]["maxrate"]}、音訊 {ps[0]["audio"]}k，最大約 {mb:.0f} MB')
+        assert pv.encode_passes(10 * 3600) == []
+        ok('超長影片（10 小時）連最低碼率都裝不下時明確回報，不會產生超過 95 MB 的檔案')
+
         print('壓力測試：15 秒全畫面雜訊（最難壓縮）…')
         noise_src = tmp / 'noise'
         noise_src.mkdir()
