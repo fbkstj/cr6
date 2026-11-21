@@ -1122,7 +1122,10 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
       return Object.assign(runView(r), { poll: '查詢失敗：' + String(e && e.message || e).slice(0, 200) });   // 暫時失敗就下次再查
     }
     if (job.status === 'in_progress' || !job.status) return Object.assign(runView(r), { poll: 'Gemini 狀態：' + (job.status || '（沒有狀態）') });
-    if (job.status !== 'completed') return failRun(`AI 評分${job.status === 'cancelled' ? '被取消' : '失敗'}${job.error ? '：' + job.error : `（${job.status}）`}`);
+    if (job.status !== 'completed') {
+      if (job.raw) await db.updateAiRun(r.id, { raw_output: job.raw });
+      return failRun(`AI 評分${job.status === 'cancelled' ? '被取消' : '失敗'}${job.error ? '：' + job.error : `（${job.status}，原始回應見「詳情」）`}`);
+    }
     if (!(await db.updateAiRun(r.id, { status: 'finishing', updated_at: iso(now()) }, 'generating'))) return runView(await db.getAiRun(r.id));
 
     const t = await db.getTeam(r.team_id);

@@ -104,8 +104,10 @@ export function createGemini({ apiKey, model, fetchImpl = fetch, sleep = ms => n
         headers: headers({ 'Api-Revision': API_REVISION }), signal: AbortSignal.timeout(20000),
       }), '查詢 AI 評分');
       const j = await r.json();
+      const done = j.status && j.status !== 'in_progress';
       return { status: j.status || '', text: interactionText(j), usage: j.usage || j.usageMetadata || j.usage_metadata || null,
-        error: j.error ? String(j.error.message || JSON.stringify(j.error)) : '' };
+        error: j.error ? String(j.error.message || JSON.stringify(j.error)) : '',
+        raw: done && j.status !== 'completed' ? JSON.stringify(j).slice(0, 4000) : '' };   // 失敗時保留原始回應，方便找原因
     },
 
     async deleteJob(id) {
