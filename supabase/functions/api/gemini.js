@@ -106,7 +106,7 @@ export function createGemini({ apiKey, model, fetchImpl = fetch, sleep = ms => n
       const j = await r.json();
       const done = j.status && j.status !== 'in_progress';
       return { status: j.status || '', text: interactionText(j), usage: j.usage || j.usageMetadata || j.usage_metadata || null,
-        error: j.error ? String(j.error.message || JSON.stringify(j.error)) : '',
+        error: interactionError(j),
         raw: done && j.status !== 'completed' ? JSON.stringify(j).slice(0, 4000) : '' };   // 失敗時保留原始回應，方便找原因
     },
 
@@ -114,6 +114,17 @@ export function createGemini({ apiKey, model, fetchImpl = fetch, sleep = ms => n
       try { await fetchImpl(`${BASE}/v1beta/interactions/${encodeURIComponent(id)}`, { method: 'DELETE', headers: headers({ 'Api-Revision': API_REVISION }), signal: AbortSignal.timeout(20000) }); } catch (e) { /* 免費方案 1 天後也會自動刪除 */ }
     },
   };
+}
+
+/** 錯誤原因：實測（2026-11-22）Google 放在 errors: [{code, message}]，也接受 error: {message} */
+const ERROR_HINT = { RESOURCE_EXHAUSTED: '額度不足（免費方案沒有這個模型的額度，或今天的額度用完了；開通付費或換模型）' };
+export function interactionError(j) {
+  const list = Array.isArray(j && j.errors) ? j.errors : j && j.error ? [j.error] : [];
+  return list.map(e => {
+    if (!e || typeof e !== 'object') return String(e || '');
+    const code = e.code ? String(e.code) : '';
+    return [ERROR_HINT[code] || code, e.message ? String(e.message) : ''].filter(Boolean).join('：');
+  }).filter(Boolean).join('；').slice(0, 400);
 }
 
 /** 從 interaction 取出模型輸出的文字（文件的範例有 output_text、steps[].content[].text、outputs[].text 幾種寫法，都接受；略過 thought） */

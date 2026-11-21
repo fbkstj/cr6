@@ -1173,7 +1173,7 @@ const aiReply = (scores, extra) => Object.assign({
 }
 console.log('P7 Gemini 用戶端（假的 HTTP，不會連到 Google）');
 {
-  const { createGemini, interactionText } = await import('../supabase/functions/api/gemini.js');
+  const { createGemini, interactionText, interactionError } = await import('../supabase/functions/api/gemini.js');
   const make = (responses) => {
     const seen = [], waits = [];
     let t = 0;
@@ -1227,6 +1227,10 @@ console.log('P7 Gemini 用戶端（假的 HTTP，不會連到 Google）');
     assert.equal(r.raw, '', '完成時不保留原始回應（內容已存在 raw_output）');
     await assert.rejects(g.getJob('gone'), e => e.status === 404);
     assert.equal(interactionText({ output_text: 'A' }), 'A');
+    // 2026-11-22 實測到的格式：errors 陣列
+    assert.match(interactionError({ status: 'failed', errors: [{ message: 'There was a problem processing your request.', code: 'RESOURCE_EXHAUSTED' }] }), /^額度不足.*：There was a problem/);
+    assert.equal(interactionError({ error: { message: 'quota' } }), 'quota');
+    assert.equal(interactionError({ status: 'failed' }), '');
     assert.equal(interactionText({ outputs: [{ type: 'thought', text: 'x' }, { type: 'text', text: 'B' }] }), 'B');
   });
 }
