@@ -1125,6 +1125,46 @@ const aiReply = (scores, extra) => Object.assign({
     await expectErr(/只有「評分」或「結算」/, 'adminAiStart', admin, team('team01'), true);
   });
 }
+console.log('P7 Gemini 用戶端（假的 HTTP，不會連到 Google）');
+{
+  const { createGemini } = await import('../supabase/functions/api/gemini.js');
+  const okBody = { candidates: [{ content: { parts: [{ text: '{"items":[]}' }] }, finishReason: 'STOP' }], usageMetadata: { totalTokenCount: 9 } };
+  const make = (statuses) => {
+    const seen = [], waits = [];
+    let t = 0;
+    const g = createGemini({
+      apiKey: 'test-key', model: 'm',
+      fetchImpl: async (url, opt) => {
+        seen.push({ url, key: opt.headers['x-goog-api-key'] });
+        const st = statuses.shift();
+        t += 2000;   // 每次請求花 2 秒
+        return new Response(JSON.stringify(st === 200 ? okBody : { error: { message: 'This model is currently experiencing high demand.' } }), { status: st });
+      },
+      sleep: async ms => { waits.push(ms); t += ms; },
+      clock: () => t,
+    });
+    return { g, seen, waits };
+  };
+
+  await step('評分請求遇到 503／429 自動重試，成功就回傳結果與嘗試次數', async () => {
+    const { g, seen, waits } = make([503, 429, 200]);
+    const r = await g.generate('https://gemini.test/files/a', 'prompt');
+    assert.equal(r.attempts, 3);
+    assert.equal(r.text, '{"items":[]}');
+    assert.deepEqual(waits, [4000, 10000]);
+    assert.ok(seen.every(s => /models\/m:generateContent$/.test(s.url) && s.key === 'test-key'));
+  });
+
+  await step('重試 3 次都忙碌 → 失敗並註明已自動重試；400 之類的錯誤不重試', async () => {
+    let { g, waits } = make([503, 503, 503]);
+    await assert.rejects(g.generate('u', 'p'), e => /HTTP 503/.test(e.message) && /已自動重試，共 3 次/.test(e.message));
+    assert.equal(waits.length, 2);
+    ({ g, waits } = make([400]));
+    await assert.rejects(g.generate('u', 'p'), e => /HTTP 400/.test(e.message) && !/重試/.test(e.message));
+    assert.equal(waits.length, 0);
+  });
+}
+
 async function expectErrOf(ctx, re, fn, ...args) {
   const r = await ctx.api.handle({ fn, args });
   assert.equal(r.ok, false, fn + ' 應該失敗');

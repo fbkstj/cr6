@@ -4,7 +4,13 @@
 
 const BASE = 'https://generativelanguage.googleapis.com';
 
-export function createGemini({ apiKey, model, fetchImpl = fetch }) {
+// 模型忙碌（503）、次數暫時用完（429）、伺服器錯誤（500）時自動重試；整個評分請求要在 Edge Function 的時間內結束
+const RETRY_STATUS = [429, 500, 503];
+const RETRY_DELAYS = [4000, 10000];          // 第 2、3 次之前各等多久
+const GENERATE_BUDGET_MS = 140000;            // 一次評分請求（含重試）最多花多久
+const MIN_ATTEMPT_MS = 25000;                 // 剩下的時間不夠一次嘗試就不再重試
+
+export function createGemini({ apiKey, model, fetchImpl = fetch, sleep = ms => new Promise(r => setTimeout(r, ms)), clock = () => Date.now() }) {
   if (!apiKey) throw new Error('沒有設定 GEMINI_API_KEY');
   const headers = extra => Object.assign({ 'x-goog-api-key': apiKey }, extra || {});
 
@@ -60,21 +66,33 @@ export function createGemini({ apiKey, model, fetchImpl = fetch }) {
       try { await fetchImpl(`${BASE}/v1beta/${name}`, { method: 'DELETE', headers: headers(), signal: AbortSignal.timeout(20000) }); } catch (e) { /* 48 小時後也會自動刪除 */ }
     },
 
-    /** 影片＋文字提示，要求回傳 JSON；回傳 {text, usage, finishReason} */
+    /** 影片＋文字提示，要求回傳 JSON；回傳 {text, usage, finishReason, attempts}。忙碌時自動重試（最多 3 次） */
     async generate(fileUri, prompt) {
-      const r = await check(await fetchImpl(`${BASE}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-        method: 'POST',
-        headers: headers({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ file_data: { mime_type: 'video/mp4', file_uri: fileUri } }, { text: prompt }] }],
-          generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
-        }),
-        signal: AbortSignal.timeout(140000),
-      }), 'AI 評分');
-      const j = await r.json();
-      const cand = (j.candidates || [])[0] || {};
-      const text = ((cand.content && cand.content.parts) || []).map(p => p.text || '').join('');
-      return { text, usage: j.usageMetadata || null, finishReason: cand.finishReason || '' };
+      const start = clock();
+      const body = JSON.stringify({
+        contents: [{ role: 'user', parts: [{ file_data: { mime_type: 'video/mp4', file_uri: fileUri } }, { text: prompt }] }],
+        generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
+      });
+      for (let attempt = 1; ; attempt++) {
+        const left = GENERATE_BUDGET_MS - (clock() - start);
+        try {
+          const r = await check(await fetchImpl(`${BASE}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+            method: 'POST', headers: headers({ 'Content-Type': 'application/json' }), body, signal: AbortSignal.timeout(Math.max(5000, left)),
+          }), 'AI 評分');
+          const j = await r.json();
+          const cand = (j.candidates || [])[0] || {};
+          const text = ((cand.content && cand.content.parts) || []).map(p => p.text || '').join('');
+          return { text, usage: j.usageMetadata || null, finishReason: cand.finishReason || '', attempts: attempt };
+        } catch (e) {
+          const delay = RETRY_DELAYS[attempt - 1];
+          const retryable = RETRY_STATUS.includes(e.status);
+          if (!retryable || delay === undefined || GENERATE_BUDGET_MS - (clock() - start) - delay < MIN_ATTEMPT_MS) {
+            if (attempt > 1) e.message += `（已自動重試，共 ${attempt} 次）`;
+            throw e;
+          }
+          await sleep(delay);
+        }
+      }
     },
   };
 }

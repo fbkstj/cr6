@@ -1102,7 +1102,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     try { out = await gemini.generate(f.uri || r.gemini_uri, aiPrompt(c, t, v, rb)); } catch (e) { return failRun(String(e && e.message || e)); }
     const { result, problems } = aiParse(out.text, c, v, rb);
     if (out.finishReason && !['STOP', 'MAX_TOKENS'].includes(out.finishReason) && !out.text) problems.unshift(`AI 沒有回應（${out.finishReason}）`);
-    await db.updateAiRun(r.id, { raw_output: String(out.text || '').slice(0, 20000), result, problems, usage: out.usage, updated_at: iso(now()) });
+    await db.updateAiRun(r.id, { raw_output: String(out.text || '').slice(0, 20000), result, problems, usage: Object.assign({}, out.usage || {}, { attempts: out.attempts || 1 }), updated_at: iso(now()) });
     await gemini.deleteFile(r.gemini_file);
     r = await db.getAiRun(r.id);
     if (problems.length) {
