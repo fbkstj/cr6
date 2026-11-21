@@ -1118,9 +1118,10 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     if (age > AI_STALE_MS.generating) return failRun('AI 評分超過 20 分鐘沒有完成，請重新執行');
     let job;
     try { job = await gemini.getJob(r.gemini_job); } catch (e) {
-      return e.status === 404 ? failRun('Gemini 找不到這次評分（可能已過期），請重新執行') : runView(r);   // 查詢暫時失敗就下次再查
+      if (e.status === 404) return failRun('Gemini 找不到這次評分（可能已過期），請重新執行');
+      return Object.assign(runView(r), { poll: '查詢失敗：' + String(e && e.message || e).slice(0, 200) });   // 暫時失敗就下次再查
     }
-    if (job.status === 'in_progress' || !job.status) return runView(r);
+    if (job.status === 'in_progress' || !job.status) return Object.assign(runView(r), { poll: 'Gemini 狀態：' + (job.status || '（沒有狀態）') });
     if (job.status !== 'completed') return failRun(`AI 評分${job.status === 'cancelled' ? '被取消' : '失敗'}${job.error ? '：' + job.error : `（${job.status}）`}`);
     if (!(await db.updateAiRun(r.id, { status: 'finishing', updated_at: iso(now()) }, 'generating'))) return runView(await db.getAiRun(r.id));
 

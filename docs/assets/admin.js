@@ -417,6 +417,7 @@ function drawAi() {
         <td>${run ? `${chip(run.statusLabel, AI_CHIP[run.status])}${going ? ' <span class="muted small">…</span>' : ''}
           <div class="muted small">${fmtTime(run.startedAt)}${r.runCount > 1 ? `・共 ${r.runCount} 次` : ''}</div>
           ${run.error ? `<div class="small" style="color:var(--bad)">${esc(run.error)}</div>` : ''}
+          ${going && run.poll ? `<div class="muted small">${esc(run.poll)}</div>` : ''}
           ${run.status === 'needs_review' ? `<div class="small">${run.problems.map(esc).join('<br>')}</div>` : ''}` : '<span class="muted">—</span>'}</td>
         <td><div class="row">
           ${run && !going ? `<button class="btn small" data-act="ai-detail" data-id="${run.id}">詳情</button>` : ''}
