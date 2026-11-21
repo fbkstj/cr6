@@ -27,10 +27,14 @@ export function createGemini({ apiKey, model, fetchImpl = fetch, sleep = ms => n
   return {
     model,
 
-    /** 從網址下載影片並上傳到 Gemini Files API（resumable：start → upload, finalize） */
+    /** 從網址下載影片並上傳到 Gemini Files API */
     async uploadFromUrl(videoUrl, displayName) {
       const v = await check(await fetchImpl(videoUrl, { signal: AbortSignal.timeout(60000) }), '下載影片');
-      const bytes = new Uint8Array(await v.arrayBuffer());
+      return this.uploadBytes(new Uint8Array(await v.arrayBuffer()), displayName);
+    },
+
+    /** 上傳影片內容到 Gemini Files API（resumable：start → upload, finalize） */
+    async uploadBytes(bytes, displayName, uploadTimeoutMs = 110000) {
       const start = await check(await fetchImpl(`${BASE}/upload/v1beta/files`, {
         method: 'POST',
         headers: headers({
@@ -49,7 +53,7 @@ export function createGemini({ apiKey, model, fetchImpl = fetch, sleep = ms => n
         method: 'POST',
         headers: { 'Content-Length': String(bytes.length), 'X-Goog-Upload-Offset': '0', 'X-Goog-Upload-Command': 'upload, finalize' },
         body: bytes,
-        signal: AbortSignal.timeout(110000),
+        signal: AbortSignal.timeout(uploadTimeoutMs),
       }), '上傳影片');
       const j = await up.json();
       const f = j.file || j;
@@ -108,6 +112,38 @@ export function createGemini({ apiKey, model, fetchImpl = fetch, sleep = ms => n
       return { status: j.status || '', text: interactionText(j), usage: j.usage || j.usageMetadata || j.usage_metadata || null,
         error: interactionError(j),
         raw: done && j.status !== 'completed' ? JSON.stringify(j).slice(0, 4000) : '' };   // 失敗時保留原始回應，方便找原因
+    },
+
+    /**
+     * 同步評分（generateContent，等到 AI 寫完）：給主辦方電腦上的 tools/ai_score.mjs 用，沒有 Edge Function 的時間限制。
+     * 忙碌（429／500／503）時等一下再試，最多 4 次。回傳 {text, usage, finishReason, attempts}
+     */
+    async generate(fileUri, prompt, { timeoutMs = 15 * 60 * 1000, delays = [10000, 30000, 60000] } = {}) {
+      const body = JSON.stringify({
+        contents: [{ role: 'user', parts: [{ file_data: { mime_type: 'video/mp4', file_uri: fileUri } }, { text: prompt }] }],
+        generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
+      });
+      for (let attempt = 1; ; attempt++) {
+        try {
+          const r = await check(await fetchImpl(`${BASE}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+            method: 'POST', headers: headers({ 'Content-Type': 'application/json' }), body, signal: AbortSignal.timeout(timeoutMs),
+          }), 'AI 評分');
+          const j = await r.json();
+          const cand = (j.candidates || [])[0] || {};
+          const text = ((cand.content && cand.content.parts) || []).filter(p => !p.thought).map(p => p.text || '').join('');
+          const u = j.usageMetadata || {};
+          return { text, finishReason: cand.finishReason || '', attempts: attempt,
+            usage: { promptTokens: u.promptTokenCount, outputTokens: u.candidatesTokenCount, thoughtTokens: u.thoughtsTokenCount, totalTokens: u.totalTokenCount },
+            blocked: j.promptFeedback && j.promptFeedback.blockReason ? String(j.promptFeedback.blockReason) : '' };
+        } catch (e) {
+          const delay = delays[attempt - 1];
+          if (!RETRY_STATUS.includes(e.status) || delay === undefined) {
+            if (attempt > 1) e.message += `（已自動重試，共 ${attempt} 次）`;
+            throw e;
+          }
+          await sleep(delay);
+        }
+      }
     },
 
     async deleteJob(id) {

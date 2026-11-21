@@ -404,7 +404,8 @@ function drawAi() {
     ${head}
     <p class="muted small" style="margin:0">AI 看鎖定版本的影片，依評分表四項給分並寫評語；結果驗證通過就自動送出，算成一位評審。
       有項目判斷不了或格式不對時標成「需要處理」，可以重跑，或由主辦人員補分並寫理由。${d.model ? `模型：<span class="mono">${esc(d.model)}</span>。` : ''}
-      AI 在 Google 背景評分，一件大約 1～5 分鐘；這個頁面每 5 秒查一次結果。中途關掉頁面也沒關係，回到這個分頁會接著查。</p>
+      AI 在 Google 背景評分，一件大約 1～5 分鐘；這個頁面每 5 秒查一次結果。中途關掉頁面也沒關係，回到這個分頁會接著查。<br>
+      在這裡執行常失敗時，可以改在主辦方電腦上執行 <span class="mono">node tools/ai_score.mjs --all</span>（沒有時間限制，結果一樣會出現在這裡；見 tools/README.md）。</p>
   </div>
   <div class="card">
     <div class="table-wrap"><table>
@@ -414,7 +415,7 @@ function drawAi() {
         return `<tr>
         <td><b>${esc(r.code)}</b> ${esc(r.name)}<br><span class="muted small">${esc(r.workTitle)}・${fmtDur(r.duration)}</span></td>
         <td>${chip(r.score.label, SCORE_CHIP[r.score.status])}${r.score.total !== null ? ` <b>${r.score.total}</b>` : ''}</td>
-        <td>${run ? `${chip(run.statusLabel, AI_CHIP[run.status])}${going ? ' <span class="muted small">…</span>' : ''}
+        <td>${run ? `${chip(run.statusLabel, AI_CHIP[run.status])}${run.local ? ' <span class="chip">主辦方電腦</span>' : ''}${going ? ' <span class="muted small">…</span>' : ''}
           <div class="muted small">${fmtTime(run.startedAt)}${r.runCount > 1 ? `・共 ${r.runCount} 次` : ''}</div>
           ${run.error ? `<div class="small" style="color:var(--bad)">${esc(run.error)}</div>` : ''}
           ${going && run.poll ? `<div class="muted small">${esc(run.poll)}</div>` : ''}

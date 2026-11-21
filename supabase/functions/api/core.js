@@ -898,7 +898,8 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     needs_review: '需要處理', finalized: '已補分完成', failed: '失敗' };
   const AI_ACTIVE = ['uploading', 'processing', 'generating', 'finishing'];
   // 超過這個時間沒有進展就當作中斷（generating 從送出背景評分起算；背景評分本身不受 Edge Function 時間上限影響）
-  const AI_STALE_MS = { uploading: 4 * 60 * 1000, starting: 2 * 60 * 1000, generating: 20 * 60 * 1000, finishing: 2 * 60 * 1000 };
+  const AI_STALE_MS = { uploading: 4 * 60 * 1000, starting: 2 * 60 * 1000, generating: 20 * 60 * 1000, finishing: 2 * 60 * 1000, local: 40 * 60 * 1000 };
+  const LOCAL_JOB = 'local';   // gemini_job＝local：在主辦方電腦上用 tools/ai_score.mjs 評分
 
   const mmss = sec => { sec = Math.max(0, Math.round(Number(sec) || 0)); return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`; };
   /** "3:15"、"1:02:03"、"75"、"75s" → 秒；看不懂回傳 null */
@@ -914,7 +915,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     return {
       id: r.id, teamId: r.team_id, status: r.status, statusLabel: AI_STATUS[r.status] || r.status, model: r.model,
       startedAt: r.started_at, finishedAt: r.finished_at, error: r.error || '', problems: r.problems || [],
-      result: r.result || null, manual: r.manual || null, usage: r.usage || null,
+      result: r.result || null, manual: r.manual || null, usage: r.usage || null, local: r.gemini_job === 'local',
     };
   }
 
@@ -1039,23 +1040,71 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     return Object.assign(runView(r), { rawOutput: r.raw_output || '' });
   }
 
-  /** 第 1 步：把鎖定版本的影片上傳到 Gemini。rerun＝已經有 AI 評分時重新評分 */
-  async function adminAiStart(token, teamId, rerun) {
-    const acc = await auth(token, 'admin');
-    const c = await aiComp(acc);
-    needGemini();
+  /** 開始一次 AI 評分前的共同檢查：作品在評分名單、已有 AI 評分時要 rerun、沒有進行中的評分 */
+  async function aiPreflight(c, teamId, rerun) {
     needScoringPhase(c);
-    if (!siteBaseUrl) fail('伺服器沒有設定 SITE_BASE_URL，請見部署說明');
     const lock = (await db.listLocks(c.id)).find(l => l.team_id === teamId);
     if (!lock) fail('這件作品不在評分名單中');
     const cur = (await db.listScores(c.id)).find(s => s.team_id === teamId && s.slot_no === aiSlotOf(c));
     if (cur && cur.status === 'submitted' && !rerun) fail('這件作品已經有 AI 評分；要重新評分請按「重新評分」');
     const busyRun = (await db.listAiRuns(c.id)).find(r => r.team_id === teamId && AI_ACTIVE.includes(r.status)
-      && now() - Date.parse(r.updated_at) < (AI_STALE_MS[r.status] || 30 * 60 * 1000));
+      && now() - Date.parse(r.updated_at) < (r.gemini_job === LOCAL_JOB ? AI_STALE_MS.local : AI_STALE_MS[r.status] || 30 * 60 * 1000));
     if (busyRun) fail('這件作品的 AI 評分正在進行中');
     const t = await db.getTeam(teamId);
     const v = await db.getVersion(lock.version_id);
     if (!v || !v.playback_path) fail('找不到這件作品的播放檔');
+    return { t, v };
+  }
+
+  /**
+   * 在主辦方電腦上評分（tools/ai_score.mjs）第 1 步：建立紀錄（狀態 generating），回傳要給 AI 的提示與影片路徑。
+   * 那支程式自己呼叫 Gemini（沒有 Edge Function 的時間限制），拿到回應後呼叫 adminAiLocalFinish。
+   */
+  async function adminAiLocalBegin(token, teamId, rerun, model) {
+    const acc = await auth(token, 'admin');
+    const c = await aiComp(acc);
+    const { t, v } = await aiPreflight(c, teamId, rerun);
+    model = str(model, 60).trim() || 'gemini';
+    const at = iso(now());
+    const run = await db.insertAiRun({
+      competition_id: c.id, team_id: t.id, version_id: v.id, rubric_id: c.rubric_id, model, prompt_version: AI_PROMPT_VERSION,
+      status: 'generating', gemini_job: LOCAL_JOB, started_by: acc.id, started_at: at, updated_at: at, problems: [],
+    });
+    await log(acc, 'ai_start', `${t.code}_v${v.version_no}`, { run: run.id, model, rerun: !!rerun, local: true });
+    return {
+      runId: run.id, team: { id: t.id, code: t.code, name: t.name },
+      video: { path: v.playback_path, versionNo: v.version_no, duration: v.duration_sec === null ? null : Number(v.duration_sec) },
+      prompt: aiPrompt(c, t, v, await rubricView(c)),
+    };
+  }
+
+  /** 第 2 步：送回 AI 的回應（或失敗原因）。伺服器照同樣規則驗證、送出到 AI 席位 */
+  async function adminAiLocalFinish(token, runId, input) {
+    const acc = await auth(token, 'admin');
+    const c = await aiComp(acc);
+    const r = await db.getAiRun(runId);
+    if (!r || r.competition_id !== c.id || r.gemini_job !== LOCAL_JOB) fail('找不到這次本機 AI 評分');
+    if (r.status !== 'generating') fail(`這次 AI 評分已經結束（${AI_STATUS[r.status] || r.status}），請重新執行`);
+    input = input || {};
+    const usage = {};   // 只留數字欄位（token 數、嘗試次數、耗時秒數）
+    if (input.usage && typeof input.usage === 'object') Object.entries(input.usage).slice(0, 20).forEach(([k, val]) => { if (Number.isFinite(val)) usage[str(k, 40)] = val; });
+    if (input.error) {
+      await db.updateAiRun(r.id, { status: 'failed', error: str(input.error, 500), raw_output: str(input.raw, 4000) || null, usage,
+        updated_at: iso(now()), finished_at: iso(now()) });
+      return runView(await db.getAiRun(r.id));
+    }
+    needScoringPhase(c);
+    if (!(await db.updateAiRun(r.id, { status: 'finishing', updated_at: iso(now()) }, 'generating'))) fail('這次 AI 評分正在寫入，請重新整理');
+    return completeRun(c, acc, r, str(input.text, 20000), usage);
+  }
+
+  /** 第 1 步：把鎖定版本的影片上傳到 Gemini。rerun＝已經有 AI 評分時重新評分 */
+  async function adminAiStart(token, teamId, rerun) {
+    const acc = await auth(token, 'admin');
+    const c = await aiComp(acc);
+    needGemini();
+    if (!siteBaseUrl) fail('伺服器沒有設定 SITE_BASE_URL，請見部署說明');
+    const { t, v } = await aiPreflight(c, teamId, rerun);
     const at = iso(now());
     const run = await db.insertAiRun({
       competition_id: c.id, team_id: t.id, version_id: v.id, rubric_id: c.rubric_id, model: gemini.model, prompt_version: AI_PROMPT_VERSION,
@@ -1079,11 +1128,12 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
   async function adminAiStep(token, runId) {
     const acc = await auth(token, 'admin');
     const c = await aiComp(acc);
-    needGemini();
     let r = await db.getAiRun(runId);
     if (!r || r.competition_id !== c.id) fail('找不到這次 AI 評分');
     const age = now() - Date.parse(r.updated_at);
+    const local = r.gemini_job === LOCAL_JOB;
     const cleanup = async () => {
+      if (local || !gemini) return;
       if (r.gemini_file) await gemini.deleteFile(r.gemini_file);
       if (r.gemini_job) await gemini.deleteJob(r.gemini_job);
     };
@@ -1092,6 +1142,12 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
       await cleanup();
       return runView(await db.getAiRun(r.id));
     };
+    // 在主辦方電腦上執行的評分（tools/ai_score.mjs）：結果由那支程式送回，這裡只負責顯示與判斷中斷
+    if (local && r.status === 'generating') {
+      return age > AI_STALE_MS.local ? failRun('主辦方電腦上的評分中斷（超過 40 分鐘沒有送回結果），請重新執行')
+        : Object.assign(runView(r), { poll: '在主辦方電腦上評分中' });
+    }
+    needGemini();
     if (r.status === 'uploading') return age > AI_STALE_MS.uploading ? failRun('上傳中斷，請重新執行') : runView(r);
     if (r.status === 'finishing') return age > AI_STALE_MS.finishing ? failRun('寫入評分時中斷，請重新執行') : runView(r);
     if (!['processing', 'generating'].includes(r.status)) return runView(r);
@@ -1127,15 +1183,18 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
       return failRun(`AI 評分${job.status === 'cancelled' ? '被取消' : '失敗'}${job.error ? '：' + job.error : `（${job.status}，原始回應見「詳情」）`}`);
     }
     if (!(await db.updateAiRun(r.id, { status: 'finishing', updated_at: iso(now()) }, 'generating'))) return runView(await db.getAiRun(r.id));
+    await cleanup();
+    return completeRun(c, acc, r, job.text, Object.assign({}, r.usage || {}, job.usage || {}));
+  }
 
+  /** 拿到 AI 的回應後（狀態已經是 finishing）：解析、驗證；全部通過就送出到 AI 席位，否則標成「需要處理」 */
+  async function completeRun(c, acc, r, text, usage) {
     const t = await db.getTeam(r.team_id);
     const v = await db.getVersion(r.version_id);
     const rb = await rubricView(c);
-    const { result, problems } = aiParse(job.text, c, v, rb);
-    if (!job.text) problems.unshift('AI 沒有回傳內容');
-    await db.updateAiRun(r.id, { raw_output: String(job.text || '').slice(0, 20000), result, problems,
-      usage: Object.assign({}, r.usage || {}, job.usage || {}), updated_at: iso(now()) });
-    await cleanup();
+    const { result, problems } = aiParse(text, c, v, rb);
+    if (!text) problems.unshift('AI 沒有回傳內容');
+    await db.updateAiRun(r.id, { raw_output: String(text || '').slice(0, 20000), result, problems, usage, updated_at: iso(now()) });
     r = await db.getAiRun(r.id);
     if (problems.length) {
       await db.updateAiRun(r.id, { status: 'needs_review', finished_at: iso(now()), updated_at: iso(now()) });
@@ -1254,7 +1313,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     judgeListWorks, judgeGetWork, judgeSaveDraft, judgeSubmit,
     adminListScores, adminGetScore, adminReturnScore,
     adminRanking, adminDecideTie, adminExportCsv, adminPublish, adminRevoke,
-    adminAiOverview, adminAiGetRun, adminAiStart, adminAiStep, adminAiFinalize,
+    adminAiOverview, adminAiGetRun, adminAiStart, adminAiStep, adminAiFinalize, adminAiLocalBegin, adminAiLocalFinish,
     publicStatus, publicResults,
   };
 

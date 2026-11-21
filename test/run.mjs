@@ -1133,6 +1133,39 @@ const aiReply = (scores, extra) => Object.assign({
     g.replies.length = 0;
   });
 
+  await step('主辦方電腦評分（tools/ai_score.mjs）：開始 → 送回回應 → 伺服器驗證並送出；後台顯示「主辦方電腦」', async () => {
+    await expectErr(/已經有 AI 評分/, 'adminAiLocalBegin', admin, team('team01'), false, 'gemini-3.8-flash');
+    await expectErr(/不能使用此功能/, 'adminAiLocalBegin', judges.j1, team('team01'), true, 'm');
+    const b = await call('adminAiLocalBegin', admin, team('team01'), true, 'gemini-3.8-flash');
+    assert.equal(b.video.path, 'videos/team01_v1.mp4');
+    assert.match(b.prompt, /只輸出一個 JSON/);
+    await expectErr(/正在進行中/, 'adminAiStart', admin, team('team01'), true);
+    tick(25 * 60);    // 本機評分可以比較久，25 分鐘還不算中斷
+    let s = await call('adminAiStep', admin, b.runId);
+    assert.deepEqual([s.status, s.local, s.poll], ['generating', true, '在主辦方電腦上評分中']);
+    const r = await call('adminAiLocalFinish', admin, b.runId, { text: JSON.stringify(aiReply([35, 22, 20, 9])), usage: { totalTokens: 999, seconds: 140, bad: 'x' } });
+    assert.equal(r.status, 'done');
+    assert.equal(r.model, 'gemini-3.8-flash');
+    assert.deepEqual(r.usage, { totalTokens: 999, seconds: 140 }, '只留數字欄位');
+    assert.equal((await aiScore('team01')).total, 86);
+    await expectErr(/已經結束/, 'adminAiLocalFinish', admin, b.runId, { text: '{}' });
+  });
+
+  await step('主辦方電腦評分：回應不合格 → 需要處理；送回失敗原因 → 失敗；超過 40 分鐘沒送回 → 中斷', async () => {
+    let b = await call('adminAiLocalBegin', admin, team('team02'), true, 'm');
+    let r = await call('adminAiLocalFinish', admin, b.runId, { text: JSON.stringify(aiReply([30, null, 18, 8])) });
+    assert.equal(r.status, 'needs_review');
+    b = await call('adminAiLocalBegin', admin, team('team02'), true, 'm');
+    r = await call('adminAiLocalFinish', admin, b.runId, { error: 'AI 評分失敗（HTTP 503）', raw: '{"x":1}' });
+    assert.deepEqual([r.status, r.error], ['failed', 'AI 評分失敗（HTTP 503）']);
+    b = await call('adminAiLocalBegin', admin, team('team02'), true, 'm');
+    tick(41 * 60);
+    r = await call('adminAiStep', admin, b.runId);
+    assert.equal(r.status, 'failed');
+    assert.match(r.error, /主辦方電腦上的評分中斷/);
+    assert.equal((await aiScore('team02')).total, 77, '都不影響已送出的 AI 評分');
+  });
+
   await step('結算：每件作品要收齊 3 位老師＋AI＝4 份，平均 ÷ 4', async () => {
     for (const code of ['team01', 'team02']) {
       for (const j of ['j1', 'j2', 'j3']) await call('judgeSubmit', judges[j], team(code), { items: items(30, 20, 20, 10), ...GOOD });
@@ -1144,8 +1177,8 @@ const aiReply = (scores, extra) => Object.assign({
     const r = await call('adminRanking', admin);
     const t1 = r.rows.find(x => x.code === 'team01');
     assert.equal(r.judgeCount, 4);
-    assert.equal(t1.sum, 80 * 3 + 79);
-    assert.equal(t1.average, (80 * 3 + 79) / 4);
+    assert.equal(t1.sum, 80 * 3 + 86);          // AI＝主辦方電腦評分的 86
+    assert.equal(t1.average, (80 * 3 + 86) / 4);
     await call('adminSetPhase', admin, 'settling');
   });
 

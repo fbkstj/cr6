@@ -55,6 +55,33 @@ python tools/process_videos.py
 
 2. 等 1～2 分鐘網站更新，到後台按「**同步影片清單**」，新版本就會出現在作品頁。
 
+## AI 評分（在主辦方電腦上執行）：tools/ai_score.mjs
+
+後台「AI 評分」分頁的按鈕是請伺服器去呼叫 Gemini；免費方案常常太慢或失敗，伺服器又有時間上限（約 150 秒）。
+這支程式改在你的電腦上直接等 Gemini 寫完（沒有時間限制），結果送回評分系統，伺服器用同樣的規則驗證並送出到 AI 評審席位。
+
+**需要**：Node.js、在專案資料夾執行、正式系統在「評分」或「結算」階段、競賽有開啟 AI 評審。
+
+```
+node tools/ai_score.mjs --all
+```
+
+1. 輸入主辦人員帳號（直接按 Enter＝admin01）與密碼。
+2. 輸入 Gemini API 金鑰（從 AI Studio 複製，貼上後按 Enter）。**密碼與金鑰輸入時都不會顯示，也不會存進任何檔案**。
+3. 程式會一件一件評：上傳影片 → 等 Gemini 處理 → 請 AI 評分（一件可能要幾分鐘）→ 送回系統。最後列出每件的結果。
+4. 到後台「AI 評分」分頁看詳情（會標「主辦方電腦」）。「需要處理」的作品可以補分，或再跑一次。
+
+其他用法：
+
+| 指令 | 用途 |
+|---|---|
+| `node tools/ai_score.mjs team01` | 只評 team01（可以列好幾組） |
+| `node tools/ai_score.mjs team01 --rerun` | 已經有 AI 評分也重新評（新結果驗證通過才取代舊的） |
+| `node tools/ai_score.mjs --all --model gemini-4-neon` | 換模型（免費方案沒有 gemini-4-neon 的額度） |
+| `node tools/ai_score.mjs --all --fake --api http://localhost:8790/api` | 不呼叫 Gemini 的演練（搭配 `node test/devserver.mjs`） |
+
+影片從 `docs/videos/` 讀取（和網站上的是同一份）；本機沒有時才從網站下載。
+
 ## 測試
 
 `python test/test_videos.py`：用合成測試片驗證全部檢查規則、直式影片、音畫同步與碼率上限（約 5 分鐘）。
