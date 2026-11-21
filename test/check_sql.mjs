@@ -34,6 +34,9 @@ await db.exec(sql); ok('migration 重跑一次也成功（冪等）');
 
 const cid = (await db.query(`select create_competition('測試競賽','admin01','主辦','password123',5) as id`)).rows[0].id;
 ok('create_competition 建立競賽');
+const dflt = (await db.query(`select ai_judge from competitions where id=$1`, [cid])).rows[0];
+dflt.ai_judge === true ? ok('新競賽預設開啟 AI 評審') : bad('ai_judge 預設', JSON.stringify(dflt));
+await db.query(`update competitions set ai_judge=false where id=$1`, [cid]);   // P1～P5 的測試照原本（沒有 AI）的規則跑；AI 在最後一段測
 const items = (await db.query(`select sum(max_score)::int s, count(*)::int n from rubric_items ri join competitions c on c.rubric_id = ri.rubric_id where c.id = $1`, [cid])).rows[0];
 items.s === 100 && items.n === 4 ? ok('預設評分表 4 項、總分 100') : bad('預設評分表', JSON.stringify(items));
 
@@ -58,7 +61,7 @@ const j = [];
 for (let i = 1; i <= 5; i++) j.push((await db.query(`insert into accounts(competition_id, login_id, display_name, role) values($1,$2,$3,'judge') returning id`, [cid, 'judge0' + i, '評審' + i])).rows[0].id);
 await expectOk('指派評審席位 1', `insert into judge_slots(competition_id, slot_no, account_id) values($1,1,$2)`, [cid, j[0]]);
 await expectFail('同一評審不能坐兩個席位', `insert into judge_slots(competition_id, slot_no, account_id) values($1,2,$2)`, [cid, j[0]]);
-await expectFail('席位編號 1～5', `insert into judge_slots(competition_id, slot_no, account_id) values($1,6,$2)`, [cid, j[1]]);
+await expectFail('席位編號 1～6（5 位老師＋AI）', `insert into judge_slots(competition_id, slot_no, account_id) values($1,7,$2)`, [cid, j[1]]);
 
 const tid = (await db.query(`insert into teams(competition_id, code, name) values($1,'team01','第一組') returning id`, [cid])).rows[0].id;
 await expectFail('組別代碼格式 teamNN', `insert into teams(competition_id, code) values($1,'t1')`, [cid]);
@@ -165,7 +168,7 @@ r1 = (await save(j[0], tid, sc(40, 20, 15), okText, '可以補充測試數據與
 r1.status === 'submitted' && r1.total === 75 ? ok('修改後重新送出 = 75') : bad('重送', JSON.stringify(r1));
 const hist = (await db.query(`select action, reason from score_history where score_id=$1 order by id`, [sid])).rows.map(h => h.action + (h.reason ? ':' + h.reason : ''));
 JSON.stringify(hist) === JSON.stringify(['submit', 'return:第二項分數請再確認', 'resubmit']) ? ok('更正歷程：submit → return（原因）→ resubmit') : bad('歷程', JSON.stringify(hist));
-await db.query(`insert into scores(competition_id, team_id, version_id, slot_no, account_id) values($1,$2,$3,9,$4)`, [cid, tid, vid, j[1]]).then(() => bad('席位 9', '應該失敗'), () => ok('席位編號超過 5 被資料庫拒絕'));
+await db.query(`insert into scores(competition_id, team_id, version_id, slot_no, account_id) values($1,$2,$3,9,$4)`, [cid, tid, vid, j[1]]).then(() => bad('席位 9', '應該失敗'), () => ok('席位編號超過 6 被資料庫拒絕'));
 const fp4 = (await db.query(`select has_function_privilege('anon','judge_save(uuid,uuid,jsonb,text,text,boolean)','execute') a, has_function_privilege('anon','return_score(uuid,uuid,text)','execute') b`)).rows[0];
 !fp4.a && !fp4.b ? ok('anon 不能執行評分與退回函式') : bad('函式權限', JSON.stringify(fp4));
 
@@ -196,6 +199,67 @@ const pl = (await db.query(`select array_agg(action order by id) a from admin_lo
 JSON.stringify(pl) === '["publish","revoke","publish"]' ? ok('公布與撤回都有操作紀錄') : bad('紀錄', JSON.stringify(pl));
 const fp5 = (await db.query(`select has_function_privilege('anon','publish_results(uuid,uuid,jsonb)','execute') a, has_function_privilege('anon','revoke_publication(uuid,uuid,text)','execute') b`)).rows[0];
 !fp5.a && !fp5.b ? ok('anon 不能執行公布與撤回函式') : bad('函式權限', JSON.stringify(fp5));
+
+/* ───── P7：AI 評審 ───── */
+// 新競賽（AI 開啟、3 位老師）：開始評分時自動建立 AI 帳號坐席位 4；公布要收齊 4 份
+const cidA = (await db.query(`select create_competition('AI 測試','admin02','主辦2','password123') as id`)).rows[0].id;
+const ca = (await db.query(`select judge_count, ai_judge from competitions where id=$1`, [cidA])).rows[0];
+ca.judge_count === 3 && ca.ai_judge ? ok('create_competition 預設 3 位評審＋AI') : bad('預設', JSON.stringify(ca));
+const adminA = (await db.query(`select id from accounts where login_id='admin02'`)).rows[0].id;
+const ja = [];
+for (let i = 1; i <= 3; i++) {
+  ja.push((await db.query(`insert into accounts(competition_id, login_id, display_name, role) values($1,$2,$3,'judge') returning id`, [cidA, 'aj0' + i, 'A評審' + i])).rows[0].id);
+  await db.query(`insert into judge_slots(competition_id, slot_no, account_id) values($1,$2,$3)`, [cidA, i, ja[i - 1]]);
+}
+const tA = (await db.query(`insert into teams(competition_id, code) values($1,'team01') returning id`, [cidA])).rows[0].id;
+const vA = (await db.query(`insert into video_versions(competition_id, team_id, version_no, source_filename, source_sha256, source_size, check_ok, playback_path, duration_sec)
+  values($1,$2,1,'team01_v1.mov',$3,100,true,'videos/team01_v1.mp4',300) returning id`, [cidA, tA, 'f'.repeat(64)])).rows[0].id;
+await db.query(`insert into team_current(team_id, version_id) values($1,$2)`, [tA, vA]);
+await db.query(`insert into reviews(version_id, status) values($1,'pass')`, [vA]);
+await db.query(`update competitions set phase='collecting' where id=$1`, [cidA]);
+await expectOk('AI 開啟時開始評分', `select lock_for_judging($1,$2)`, [cidA, adminA]);
+const aiAcc = (await db.query(`select a.id, a.login_id, a.role, a.password_hash, s.slot_no from accounts a join judge_slots s on s.account_id=a.id where a.competition_id=$1 and a.role='ai'`, [cidA])).rows[0];
+aiAcc && aiAcc.slot_no === 4 && /^ai-[0-9a-f]{8}$/.test(aiAcc.login_id) && aiAcc.password_hash === null ? ok('自動建立 AI 帳號（沒有密碼）並坐席位 4') : bad('AI 帳號', JSON.stringify(aiAcc));
+await expectFail('AI 帳號不能設定密碼', `select set_password($1,'password123')`, [aiAcc.login_id], /AI 帳號不能設定密碼/);
+await db.query(`update accounts set password_hash = extensions.crypt('password123', extensions.gen_salt('bf', 4)) where id=$1`, [aiAcc.id]);
+(await db.query(`select check_password($1,'password123') id`, [aiAcc.login_id])).rows[0].id === null ? ok('就算 AI 帳號有密碼雜湊也不能登入') : bad('AI 登入', '可以登入');
+await db.query(`update accounts set password_hash = null where id=$1`, [aiAcc.id]);
+const riA = (await db.query(`select ri.id, ri.max_score from rubric_items ri join competitions c on c.rubric_id=ri.rubric_id where c.id=$1 order by sort`, [cidA])).rows;
+const scA = (a, b, c2, d) => JSON.stringify({ [riA[0].id]: a, [riA[1].id]: b, [riA[2].id]: c2, [riA[3].id]: d });
+for (const jid of ja) await db.query(`select judge_save($1,$2,$3::jsonb,$4,$4,true)`, [tA, jid, scA(30, 20, 20, 10), okText]);
+await db.query(`update competitions set phase='settling' where id=$1`, [cidA]);
+await expectFail('只有 3 位老師的評分（缺 AI）不能公布', `select publish_results($1,$2,$3::jsonb)`, [cidA, adminA, snap], /還有 1 件作品的評分沒有收齊/);
+await db.query(`update competitions set phase='judging' where id=$1`, [cidA]);
+const aiSave = (await db.query(`select judge_save($1,$2,$3::jsonb,$4,$4,true) r`, [tA, aiAcc.id, scA(31, 20, 18, 8), okText])).rows[0].r;
+aiSave.status === 'submitted' && aiSave.total === 77 ? ok('AI 帳號用 judge_save 送出到席位 4') : bad('AI 送出', JSON.stringify(aiSave));
+(await db.query(`select slot_no from scores where team_id=$1 and account_id=$2`, [tA, aiAcc.id])).rows[0].slot_no === 4 ? ok('AI 評分存在席位 4') : bad('AI 席位', '');
+await db.query(`update competitions set phase='settling' where id=$1`, [cidA]);
+await expectOk('收齊 3 位老師＋AI 後可以公布', `select publish_results($1,$2,$3::jsonb)`, [cidA, adminA, snap]);
+const lgA = (await db.query(`select detail from admin_logs where competition_id=$1 and action='lock_for_judging'`, [cidA])).rows[0].detail;
+lgA.ai === true && lgA.judges === 3 ? ok('鎖版紀錄寫明老師人數與 AI') : bad('鎖版紀錄', JSON.stringify(lgA));
+await expectFail('ai_runs 狀態只能是規定的值', `insert into ai_runs(competition_id, team_id, version_id, model, prompt_version, status) values($1,$2,$3,'m','v1','weird')`, [cidA, tA, vA]);
+await expectOk('建立 ai_runs 紀錄', `insert into ai_runs(competition_id, team_id, version_id, model, prompt_version, status) values($1,$2,$3,'m','v1','uploading')`, [cidA, tA, vA]);
+const rlsA = (await db.query(`select relrowsecurity r from pg_class where relname='ai_runs'`)).rows[0].r;
+const anonA = (await db.query(`select count(*)::int n from information_schema.role_table_grants where grantee in ('anon','authenticated') and table_name='ai_runs'`)).rows[0].n;
+rlsA && anonA === 0 ? ok('ai_runs 開啟 RLS、anon 沒有權限') : bad('ai_runs 權限', rlsA + ' ' + anonA);
+const fpA = (await db.query(`select has_function_privilege('anon','seat_count(competitions)','execute') a`)).rows[0];
+!fpA.a ? ok('anon 不能執行 seat_count') : bad('函式權限', JSON.stringify(fpA));
+// AI 關閉時：不建立 AI 席位
+const cidB = (await db.query(`select create_competition('AI 關閉','admin03','主辦3','password123',3) as id`)).rows[0].id;
+await db.query(`update competitions set ai_judge=false, phase='collecting' where id=$1`, [cidB]);
+const adminB = (await db.query(`select id from accounts where login_id='admin03'`)).rows[0].id;
+for (let i = 1; i <= 3; i++) {
+  const id = (await db.query(`insert into accounts(competition_id, login_id, display_name, role) values($1,$2,$3,'judge') returning id`, [cidB, 'bj0' + i, 'B評審' + i])).rows[0].id;
+  await db.query(`insert into judge_slots(competition_id, slot_no, account_id) values($1,$2,$3)`, [cidB, i, id]);
+}
+const tB = (await db.query(`insert into teams(competition_id, code) values($1,'team01') returning id`, [cidB])).rows[0].id;
+const vB = (await db.query(`insert into video_versions(competition_id, team_id, version_no, source_filename, source_sha256, source_size, check_ok, playback_path)
+  values($1,$2,1,'x.mov',$3,100,true,'videos/team01_v1.mp4') returning id`, [cidB, tB, '9'.repeat(64)])).rows[0].id;
+await db.query(`insert into team_current(team_id, version_id) values($1,$2)`, [tB, vB]);
+await db.query(`insert into reviews(version_id, status) values($1,'pass')`, [vB]);
+await db.query(`select lock_for_judging($1,$2)`, [cidB, adminB]);
+const slB = (await db.query(`select array_agg(slot_no order by slot_no) s from judge_slots where competition_id=$1`, [cidB])).rows[0].s;
+JSON.stringify(slB) === '[1,2,3]' ? ok('AI 關閉時不建立 AI 席位') : bad('AI 關閉', JSON.stringify(slB));
 
 console.log(`\n通過 ${pass}，失敗 ${failN}`);
 process.exit(failN ? 1 : 0);

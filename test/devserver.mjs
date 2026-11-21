@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApi } from '../supabase/functions/api/core.js';
 import { createMemDb } from './memdb.mjs';
+import { createGemini } from '../supabase/functions/api/gemini.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DOCS = path.join(ROOT, 'docs');
@@ -14,9 +15,33 @@ const DEMO = path.join(ROOT, 'test', 'out', 'demo_videos');
 const PORT = Number(process.argv[2]) || 8790;
 
 const db = createMemDb();
-await db.seedDemo({ judgeCount: 5, teams: 3 });
+await db.seedDemo({ judgeCount: 3, teams: 3, aiJudge: true });
+
+// AI 評審：有 GEMINI_API_KEY 環境變數就用真的 Gemini（會花用額度），否則用模擬（隨機分數，標明是模擬）
+const gemini = process.env.GEMINI_API_KEY
+  ? createGemini({ apiKey: process.env.GEMINI_API_KEY, model: process.env.GEMINI_MODEL || 'gemini-3.8-flash' })
+  : mockGemini();
+function mockGemini() {
+  let n = 0;
+  const ready = {};
+  return {
+    model: 'mock（模擬，不是真的 AI）',
+    async uploadFromUrl() { const name = 'files/mock' + (++n); ready[name] = Date.now() + 3000; return { name, uri: 'mock://' + name, state: 'PROCESSING' }; },
+    async getFile(name) { return { name, uri: 'mock://' + name, state: Date.now() >= ready[name] ? 'ACTIVE' : 'PROCESSING' }; },
+    async deleteFile() {},
+    async generate(uri, prompt) {
+      await new Promise(r => setTimeout(r, 2000));
+      const maxes = [...prompt.matchAll(/（滿分 (\d+)）/g)].map(m => Number(m[1]));
+      const items = maxes.map((max, i) => ({ no: i + 1, score: (n % 3 === 0 && i === 3) ? null : Math.round(max * (0.6 + Math.random() * 0.35)),
+        reason: '（模擬）依影片內容評分', evidence: [{ time: '0:0' + (i + 1), note: '（模擬）示範片段' }] }));
+      return { text: JSON.stringify({ items, strengths: '（模擬）作品完整，操作展示清楚，說明有條理。', improvements: '（模擬）可以補充測試數據與對照組，並說明限制。' }), usage: { totalTokenCount: 0 }, finishReason: 'STOP' };
+    },
+  };
+}
+
 const api = createApi({
   db,
+  gemini,
   secret: 'devserver-secret-not-for-production-0123456789',
   siteBaseUrl: `http://localhost:${PORT}/`,
   fetchJson: async () => {
@@ -82,6 +107,7 @@ http.createServer(async (req, res) => {
   sendFile(req, res, file);
 }).listen(PORT, () => {
   console.log(`本機開發伺服器：http://localhost:${PORT}/`);
-  console.log('測試帳號（合成資料，重開伺服器就還原）：admin01 / admin-pass-01；judge01～judge05 / judge-pass-01～05');
+  console.log('測試帳號（合成資料，重開伺服器就還原）：admin01 / admin-pass-01；judge01～judge05 / judge-pass-01～05（評審 3 人＋AI）');
+  console.log('AI 評審：' + (process.env.GEMINI_API_KEY ? '真的 Gemini（' + gemini.model + '）' : '模擬（設定 GEMINI_API_KEY 環境變數才會呼叫真的 Gemini）'));
   if (!fs.existsSync(path.join(DEMO, 'manifest.json'))) console.log('尚未產生示範影片：python test/make_demo_videos.py');
 });

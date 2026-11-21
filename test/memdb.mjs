@@ -13,7 +13,9 @@ export function createMemDb() {
   const t = {
     competitions: [], accounts: [], rubrics: [], rubric_items: [], judge_slots: [], teams: [], video_versions: [],
     team_current: [], reviews: [], judging_locks: [], scores: [], score_history: [], tie_decisions: [], login_fails: [], admin_logs: [], publications: [],
+    ai_runs: [],
   };
+  const seats = c => c.judge_count + (c.ai_judge ? 1 : 0);   // 同 SQL seat_count
   const clone = v => (v === undefined ? undefined : structuredClone(v));
   const strip = a => { if (!a) return null; const { password_hash, ...rest } = a; return Object.assign(clone(rest), { has_password: !!password_hash }); };
   const nowIso = () => new Date().toISOString();
@@ -45,11 +47,12 @@ export function createMemDb() {
     updateAccount: async (id, patch) => { Object.assign(t.accounts.find(a => a.id === id), clone(patch)); },
     checkPassword: async (loginId, pw) => {
       const a = t.accounts.find(x => x.login_id === loginId);
-      return a && a.active && verifyPw(String(pw), a.password_hash) ? a.id : null;
+      return a && a.active && a.role !== 'ai' && verifyPw(String(pw), a.password_hash) ? a.id : null;
     },
     setPassword: async (loginId, pw) => {
       if (String(pw).length < 8) raise('密碼至少 8 個字');
       const a = t.accounts.find(x => x.login_id === loginId);
+      if (a && a.role === 'ai') raise('AI 帳號不能設定密碼');
       if (!a) raise('找不到帳號');
       a.password_hash = hashPw(String(pw));
     },
@@ -137,9 +140,18 @@ export function createMemDb() {
       const lockedIds = new Set(pass.map(x => x.team_id));
       const excluded = t.teams.filter(x => ids.has(x.id) && !lockedIds.has(x.id)).map(x => x.code).sort();
       t.judge_slots = t.judge_slots.filter(s => !(s.competition_id === cid && s.slot_no > c.judge_count));
+      if (c.ai_judge) {   // AI 評審：建立系統帳號（沒有密碼）並坐席位 N＋1
+        let ai = t.accounts.find(a => a.competition_id === cid && a.role === 'ai');
+        if (!ai) {
+          ai = { id: crypto.randomUUID(), competition_id: cid, login_id: 'ai-' + cid.replace(/-/g, '').slice(0, 8), display_name: 'AI 評審（Gemini）', role: 'ai', active: true, password_hash: null, created_at: nowIso() };
+          t.accounts.push(ai);
+        }
+        ai.active = true;
+        t.judge_slots.push({ competition_id: cid, slot_no: c.judge_count + 1, account_id: ai.id, assigned_at: nowIso(), replaced_reason: null });
+      }
       t.rubrics.find(r => r.id === c.rubric_id).locked = true;
       c.phase = 'judging';
-      t.admin_logs.push({ id: ++seq, competition_id: cid, actor, action: 'lock_for_judging', target: '', detail: { locked: pass.length, excluded }, at: nowIso() });
+      t.admin_logs.push({ id: ++seq, competition_id: cid, actor, action: 'lock_for_judging', target: '', detail: { locked: pass.length, excluded, judges: c.judge_count, ai: !!c.ai_judge }, at: nowIso() });
       return { locked: pass.length, excluded };
     },
 
@@ -236,7 +248,7 @@ export function createMemDb() {
       if (!snapshot || !Array.isArray(snapshot.teams)) raise('結果快照格式錯誤');
       const ids = teamIdsOf(cid);
       const missing = t.judging_locks.filter(l => ids.has(l.team_id)
-        && t.scores.filter(s => s.team_id === l.team_id && s.status === 'submitted' && s.slot_no <= c.judge_count).length < c.judge_count).length;
+        && t.scores.filter(s => s.team_id === l.team_id && s.status === 'submitted' && s.slot_no <= seats(c)).length < seats(c)).length;
       if (missing) raise(`還有 ${missing} 件作品的評分沒有收齊`);
       if (t.publications.some(p => p.competition_id === cid && !p.revoked_at)) raise('已經公布過了，請先撤回');
       const p = { id: crypto.randomUUID(), competition_id: cid, published_at: nowIso(), published_by: actor, snapshot: clone(snapshot), revoked_at: null };
@@ -256,12 +268,29 @@ export function createMemDb() {
       t.admin_logs.push({ id: ++seq, competition_id: cid, actor, action: 'revoke', target: p ? p.id : '', detail: { reason: String(reason).trim() }, at: nowIso() });
     },
     getLivePublication: async cid => clone(t.publications.find(p => p.competition_id === cid && !p.revoked_at) || null),
+
+    /* AI 評分紀錄 */
+    listAiRuns: async cid => clone(t.ai_runs.filter(r => r.competition_id === cid)),
+    getAiRun: async id => clone(t.ai_runs.find(r => r.id === id) || null),
+    insertAiRun: async row => {
+      const r = Object.assign({ id: crypto.randomUUID(), problems: [], gemini_file: null, gemini_uri: null, raw_output: null, result: null,
+        manual: null, usage: null, error: null, finished_at: null }, clone(row));
+      t.ai_runs.push(r);
+      return clone(r);
+    },
+    /** expectStatus：只有目前狀態相符才更新（同一步驟不會被執行兩次）；回傳是否有更新 */
+    updateAiRun: async (id, patch, expectStatus) => {
+      const r = t.ai_runs.find(x => x.id === id);
+      if (!r || (expectStatus && r.status !== expectStatus)) return false;
+      Object.assign(r, clone(patch));
+      return true;
+    },
   };
 
   /** 測試資料：等同 SQL 的 create_competition＋5 位評審＋3 個組別（全部是合成資料） */
-  db.seedDemo = async ({ judgeCount = 5, teams = 3 } = {}) => {
+  db.seedDemo = async ({ judgeCount = 5, teams = 3, aiJudge = false } = {}) => {
     const cid = crypto.randomUUID(), rid = crypto.randomUUID();
-    t.competitions.push({ id: cid, name: '測試競賽（合成資料）', active: true, phase: 'setup', judge_count: judgeCount, rubric_id: rid,
+    t.competitions.push({ id: cid, name: '測試競賽（合成資料）', active: true, phase: 'setup', judge_count: judgeCount, ai_judge: aiJudge, rubric_id: rid,
       show_status_page: true, show_item_scores: false, min_comment_chars: 10 });
     t.rubrics.push({ id: rid, competition_id: cid, name: '預設評分表', version: 1, locked: false });
     [['專題作品的應用及整合性', 40], ['專題作品與課程相關', 25], ['創意性與實用性', 25], ['作品說明的組織與表達', 10]]

@@ -100,5 +100,16 @@ export function createDb(url, serviceKey) {
     publishResults: async (cid, actor, snapshot) => must(await sb.rpc('publish_results', { p_competition: cid, p_actor: actor, p_snapshot: snapshot })),
     revokePublication: async (cid, actor, reason) => { must(await sb.rpc('revoke_publication', { p_competition: cid, p_actor: actor, p_reason: reason })); },
     getLivePublication: async cid => one(await sb.from('publications').select('*').eq('competition_id', cid).is('revoked_at', null).limit(1)),
+
+    /* AI 評分紀錄 */
+    listAiRuns: async cid => must(await sb.from('ai_runs').select('*').eq('competition_id', cid)),
+    getAiRun: async id => one(await sb.from('ai_runs').select('*').eq('id', id).limit(1)),
+    insertAiRun: async row => one(await sb.from('ai_runs').insert(row).select()),
+    /** expectStatus：只有目前狀態相符才更新；回傳是否有更新 */
+    async updateAiRun(id, patch, expectStatus) {
+      let q = sb.from('ai_runs').update(patch).eq('id', id);
+      if (expectStatus) q = q.eq('status', expectStatus);
+      return must(await q.select('id')).length > 0;
+    },
   };
 }

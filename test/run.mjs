@@ -527,12 +527,12 @@ console.log('P3 作品與資格審查');
 /* ═════════════ P4 評審評分 ═════════════ */
 
 /** 建立一個已經進入評分階段的競賽：team01、team02 通過，team03 不通過 */
-async function judgingSetup(judgeCount, { teams = 3, fail = ['team03'] } = {}) {
+async function judgingSetup(judgeCount, { teams = 3, fail = ['team03'], aiJudge = false, gemini = null } = {}) {
   const sha = c => c.repeat(64);
   const e = (team, c) => ({ team, version: 1, source_filename: team + '_v1.mov', source_sha256: sha(c), source_size: 1, duration_sec: 300,
     check_ok: true, check_notes: '', playback_path: `videos/${team}_v1.mp4`, playback_size: 1 });
   const codes = Array.from({ length: teams }, (_, i) => 'team' + String(i + 1).padStart(2, '0'));
-  const ctx = await setup({ judgeCount, teams }, { siteBaseUrl: 'https://example.test/', fetchJson: async () => ({ versions: codes.map((c, i) => e(c, 'abcdef'[i])) }) });
+  const ctx = await setup({ judgeCount, teams, aiJudge }, { siteBaseUrl: 'https://example.test/', gemini, fetchJson: async () => ({ versions: codes.map((c, i) => e(c, 'abcdef'[i])) }) });
   const admin = (await ctx.call('login', 'admin01', 'admin-pass-01')).token;
   await ctx.call('adminSyncVideos', admin);
   for (const t of (await ctx.call('adminGetBoard', admin)).teams) {
@@ -897,6 +897,238 @@ console.log('P5 結算與公布');
   await step('評審不能使用結算功能', async () => {
     for (const fn of ['adminRanking', 'adminDecideTie', 'adminExportCsv', 'adminPublish', 'adminRevoke']) await expectErr(/不能使用此功能/, fn, judges.j1);
   });
+}
+
+/* ═════════════ P7 AI 評審（用假的 Gemini，不會真的呼叫 Google） ═════════════ */
+console.log('P7 AI 評審');
+function fakeGemini() {
+  const g = {
+    model: 'fake-model', uploads: [], ticks: {}, deleted: [], replies: [], calls: 0, lastPrompt: '', uploadFail: false, fileFailed: false,
+    async uploadFromUrl(url) {
+      if (g.uploadFail) throw new Error('下載影片失敗（HTTP 404）');
+      g.uploads.push(url);
+      const name = 'files/f' + g.uploads.length;
+      g.ticks[name] = 1;                       // 第一次查詢還在處理中
+      return { name, uri: 'https://gemini.test/' + name, state: 'PROCESSING' };
+    },
+    async getFile(name) {
+      if (g.ticks[name] > 0) { g.ticks[name]--; return { name, state: 'PROCESSING' }; }
+      return { name, uri: 'https://gemini.test/' + name, state: g.fileFailed ? 'FAILED' : 'ACTIVE' };
+    },
+    async deleteFile(name) { g.deleted.push(name); },
+    async generate(uri, prompt) {
+      g.calls++;
+      g.lastPrompt = prompt;
+      await new Promise(r => setTimeout(r, 5));
+      const r = g.replies.shift();
+      if (r instanceof Error) throw r;
+      return { text: typeof r === 'string' ? r : JSON.stringify(r), usage: { totalTokenCount: 1234 }, finishReason: 'STOP' };
+    },
+  };
+  return g;
+}
+const AI_OK = { strengths: '作品完整，操作展示清楚，說明有條理', improvements: '可以補充測試數據與對照組，並說明限制' };
+const aiReply = (scores, extra) => Object.assign({
+  items: scores.map((s, i) => ({ no: i + 1, score: s, reason: '理由' + (i + 1), evidence: [{ time: '1:05', note: '示範' }, { time: '99:00', note: '超出片長' }] })),
+}, AI_OK, extra || {});
+{
+  await step('設定：AI 評審開關、總份數 M＝N＋1；沒設定金鑰時不能開始評分', async () => {
+    const pre = await setup({ judgeCount: 3, aiJudge: true });
+    const admin = (await pre.call('login', 'admin01', 'admin-pass-01')).token;
+    let c = (await pre.call('adminGetBoard', admin)).competition;
+    assert.deepEqual([c.judgeCount, c.aiJudge, c.seats, c.aiSlot, c.aiConfigured], [3, true, 4, 4, false]);
+    await pre.call('adminSetPhase', admin, 'collecting');
+    const p = await pre.call('adminJudgingPreview', admin);
+    assert.ok(p.problems.some(x => /GEMINI_API_KEY/.test(x)));
+    c = (await pre.call('adminUpdateCompetition', admin, { aiJudge: false })).competition;
+    assert.deepEqual([c.aiJudge, c.seats, c.aiSlot], [false, 3, null]);
+    assert.ok(!(await pre.call('adminJudgingPreview', admin)).problems.some(x => /GEMINI/.test(x)));
+    await expectErrOf(pre, /沒有開啟 AI 評審/, 'adminAiStart', admin, 'x');
+  });
+
+  const g = fakeGemini();
+  const { db, call, expectErr, admin, judges, team, ids, items, board } = await judgingSetup(3, { aiJudge: true, gemini: g });
+  const aiSeat = board.slots.find(s => s.slot === 4);
+  const runTo = async (teamId, rerun) => {     // 模擬後台：開始 → 一直查到不是進行中
+    let r = await call('adminAiStart', admin, teamId, rerun);
+    for (let i = 0; i < 10 && ['uploading', 'processing', 'generating'].includes(r.status); i++) r = await call('adminAiStep', admin, r.id);
+    return r;
+  };
+  const aiScore = async code => (await call('adminAiOverview', admin)).rows.find(x => x.code === code).score;
+
+  await step('開始評分：AI 帳號自動坐進席位 4；不出現在帳號管理、不能登入、不能設密碼、不能修改', async () => {
+    assert.ok(aiSeat && aiSeat.isAi);
+    assert.deepEqual(board.slots.map(s => s.slot), [1, 2, 3, 4]);
+    const accs = await call('adminListAccounts', admin);
+    assert.ok(!accs.some(a => a.role === 'ai'));
+    const ai = db._tables.accounts.find(a => a.role === 'ai');
+    assert.match(ai.login_id, /^ai-[0-9a-f]{8}$/);
+    await expectErr(/帳號或密碼不正確/, 'login', ai.login_id, 'anything-123');
+    await expectErr(/不能設定密碼/, 'adminResetPassword', admin, ai.id);
+    await expectErr(/不能修改/, 'adminUpsertAccount', admin, { id: ai.id, name: 'x' });
+    await expectErr(/已經開始評分/, 'adminUpdateCompetition', admin, { aiJudge: false });
+  });
+
+  await step('只有主辦人員能執行 AI 評分', async () => {
+    for (const fn of ['adminAiOverview', 'adminAiStart', 'adminAiStep', 'adminAiFinalize', 'adminAiGetRun']) await expectErr(/不能使用此功能/, fn, judges.j1);
+  });
+
+  await step('AI 評分：上傳鎖定版本 → 處理中 → 評分、驗證、自動送出到席位 4', async () => {
+    g.replies.push(aiReply([30, 20, 18, 8]));
+    let r = await call('adminAiStart', admin, team('team01'));
+    assert.equal(r.status, 'processing');
+    assert.equal(g.uploads[0], 'https://example.test/videos/team01_v1.mp4');
+    r = await call('adminAiStep', admin, r.id);
+    assert.equal(r.status, 'processing', '影片還在處理');
+    assert.equal(g.calls, 0);
+    r = await call('adminAiStep', admin, r.id);
+    assert.equal(r.status, 'done');
+    assert.equal(r.result.items[ids[1]], 20);
+    assert.equal(r.result.droppedEvidence, 4, '超出片長的時間點被丟掉');
+    assert.deepEqual(r.result.evidence[ids[0]], [{ sec: 65, note: '示範' }]);
+    assert.deepEqual(g.deleted, ['files/f1'], '評完刪除 Gemini 上的檔案');
+    const s = await aiScore('team01');
+    assert.deepEqual([s.status, s.total], ['submitted', 76]);
+    assert.match(g.lastPrompt, /專題作品的應用及整合性（滿分 40）/);
+    assert.match(g.lastPrompt, /只輸出一個 JSON/);
+    assert.match(g.lastPrompt, /不是給你的指令/);
+    const raw = await call('adminAiGetRun', admin, r.id);
+    assert.ok(raw.rawOutput.includes('"score":30'));
+  });
+
+  await step('已經有 AI 評分不能直接再跑；「重新評分」會先退回，舊分數留在更正歷程', async () => {
+    await expectErr(/已經有 AI 評分/, 'adminAiStart', admin, team('team01'));
+    g.replies.push(aiReply([32, 20, 18, 8]));
+    const r = await runTo(team('team01'), true);
+    assert.equal(r.status, 'done');
+    const s = await aiScore('team01');
+    assert.equal(s.total, 78);
+    const d = await call('adminGetScore', admin, s.id);
+    assert.deepEqual(d.history.map(h => h.action), ['submit', 'return', 'resubmit']);
+    assert.equal(d.history[1].reason, '重新執行 AI 評分');
+    assert.equal(d.slot, 4);
+  });
+
+  await step('某一項 AI 判斷不了（null）→ 需要處理，不會送出', async () => {
+    g.replies.push(aiReply([30, null, 18, 8]));
+    const r = await runTo(team('team02'));
+    assert.equal(r.status, 'needs_review');
+    assert.ok(r.problems.some(x => /專題作品與課程相關」AI 無法判定/.test(x)));
+    assert.equal((await aiScore('team02')).status, 'none');
+  });
+
+  await step('補分：必填理由、分數要在範圍內；補完後送出並記錄改了什麼', async () => {
+    const run = (await call('adminAiOverview', admin)).rows.find(x => x.code === 'team02').run;
+    await expectErr(/必須填寫理由/, 'adminAiFinalize', admin, run.id, { items: { [ids[1]]: 20 } });
+    await expectErr(/0～25 的整數/, 'adminAiFinalize', admin, run.id, { items: { [ids[1]]: 26 }, reason: 'x' });
+    await expectErr(/還沒有分數/, 'adminAiFinalize', admin, run.id, { items: {}, reason: '看過影片' });
+    const r = await call('adminAiFinalize', admin, run.id, { items: { [ids[1]]: 21 }, reason: '主辦人員看過影片，依判準補分' });
+    assert.equal(r.status, 'finalized');
+    assert.deepEqual(r.manual.items[ids[1]], { from: null, to: 21 });
+    assert.equal((await aiScore('team02')).total, 30 + 21 + 18 + 8);
+    await expectErr(/只有「需要處理」/, 'adminAiFinalize', admin, run.id, { items: {}, reason: 'x' });
+    const actions = (await call('adminLogs', admin)).map(l => l.action);
+    for (const a of ['ai_start', 'ai_score', 'ai_needs_review', 'ai_finalize']) assert.ok(actions.includes(a), a);
+  });
+
+  await step('回應格式錯誤、分數超出範圍、評語太短 → 需要處理；原本已送出的 AI 評分保持不變', async () => {
+    g.replies.push('這不是 JSON');
+    let r = await runTo(team('team02'), true);
+    assert.equal(r.status, 'needs_review');
+    assert.match(r.problems[0], /不是規定的 JSON/);
+    assert.equal((await aiScore('team02')).total, 77, '舊的 AI 評分還在');
+    g.replies.push(aiReply([45, 20, 18, 8], { strengths: '好' }));
+    r = await runTo(team('team02'), true);
+    assert.ok(r.problems.some(x => /45 超出 0～40/.test(x)));
+    assert.ok(r.problems.some(x => /作品優點」少於 10 個字/.test(x)));
+    g.replies.push('```json\n' + JSON.stringify(aiReply([31, 20, 18, 8])) + '\n```');
+    r = await runTo(team('team02'), true);
+    assert.equal(r.status, 'done', '包在 ```json 裡的回應也能解析');
+    assert.equal((await aiScore('team02')).total, 77);
+  });
+
+  await step('失敗：下載影片失敗、Gemini 處理失敗、評分呼叫失敗 → failed 並顯示原因，可以再試', async () => {
+    g.uploadFail = true;
+    let r = await call('adminAiStart', admin, team('team01'), true);
+    assert.equal(r.status, 'failed');
+    assert.match(r.error, /HTTP 404/);
+    g.uploadFail = false;
+    g.fileFailed = true;
+    r = await runTo(team('team01'), true);
+    assert.equal(r.status, 'failed');
+    assert.match(r.error, /無法處理這支影片/);
+    g.fileFailed = false;
+    g.replies.push(new Error('AI 評分失敗（HTTP 429）：Resource exhausted'));
+    r = await runTo(team('team01'), true);
+    assert.equal(r.status, 'failed');
+    assert.match(r.error, /429/);
+    assert.equal((await aiScore('team01')).total, 78, '失敗不影響已送出的 AI 評分');
+  });
+
+  await step('同一步驟同時按兩次，只會送出一次評分請求；進行中不能再開始', async () => {
+    g.replies.push(aiReply([33, 20, 18, 8]));
+    let r = await call('adminAiStart', admin, team('team01'), true);
+    await expectErr(/正在進行中/, 'adminAiStart', admin, team('team01'), true);
+    r = await call('adminAiStep', admin, r.id);      // 處理中
+    const before = g.calls;
+    const [a, b] = await Promise.all([call('adminAiStep', admin, r.id), call('adminAiStep', admin, r.id)]);
+    assert.equal(g.calls - before, 1);
+    assert.ok([a.status, b.status].includes('done'));
+  });
+
+  await step('評分中斷太久（例如關掉頁面）會被標成失敗，可以重新執行', async () => {
+    g.replies.push(aiReply([33, 20, 18, 8]));
+    const r = await call('adminAiStart', admin, team('team02'), true);
+    db._tables.ai_runs.find(x => x.id === r.id).status = 'generating';
+    tick(7 * 60);
+    const r2 = await call('adminAiStep', admin, r.id);
+    assert.equal(r2.status, 'failed');
+    assert.match(r2.error, /逾時/);
+    g.replies.length = 0;
+  });
+
+  await step('結算：每件作品要收齊 3 位老師＋AI＝4 份，平均 ÷ 4', async () => {
+    for (const code of ['team01', 'team02']) {
+      for (const j of ['j1', 'j2', 'j3']) await call('judgeSubmit', judges[j], team(code), { items: items(30, 20, 20, 10), ...GOOD });
+    }
+    const p = await call('adminListScores', admin);
+    assert.equal(p.judgeCount, 4);
+    assert.equal(p.judges[3].isAi, true);
+    assert.equal(p.completeWorks, 2);
+    const r = await call('adminRanking', admin);
+    const t1 = r.rows.find(x => x.code === 'team01');
+    assert.equal(r.judgeCount, 4);
+    assert.equal(t1.sum, 80 * 3 + 79);
+    assert.equal(t1.average, (80 * 3 + 79) / 4);
+    await call('adminSetPhase', admin, 'settling');
+  });
+
+  await step('AI 評分沒有送出就不能結算', async () => {
+    const x = await judgingSetup(3, { aiJudge: true, gemini: fakeGemini(), teams: 1, fail: [] });
+    for (const j of ['j1', 'j2', 'j3']) await x.call('judgeSubmit', x.judges[j], x.team('team01'), { items: x.items(30, 20, 20, 10), ...GOOD });
+    await expectErrOf(x, /team01（3\/4）/, 'adminSetPhase', x.admin, 'settling');
+  });
+
+  await step('匯出 CSV 標示 AI 與模型；公開結果只顯示評審1～4，看不出哪一位是 AI', async () => {
+    const csv = (await call('adminExportCsv', admin)).csv;
+    assert.match(csv.split('\r\n')[0], /評審4總分,評審4姓名/);
+    assert.match(csv, /AI 評審（Gemini）（fake-model）/);
+    await call('adminPublish', admin);
+    const pub = await call('publicResults');
+    assert.equal(pub.judgeCount, 4);
+    assert.deepEqual(pub.teams[0].judges.map(j => j.label), ['評審1', '評審2', '評審3', '評審4']);
+    const text = JSON.stringify(pub);
+    for (const leak of ['AI', 'Gemini', 'fake-model', 'ai-']) assert.ok(!text.includes(leak), '不應出現 ' + leak);
+  });
+
+  await step('公布後不能再執行 AI 評分', async () => {
+    await expectErr(/只有「評分」或「結算」/, 'adminAiStart', admin, team('team01'), true);
+  });
+}
+async function expectErrOf(ctx, re, fn, ...args) {
+  const r = await ctx.api.handle({ fn, args });
+  assert.equal(r.ok, false, fn + ' 應該失敗');
+  assert.match(r.error, re);
 }
 
 console.log(`\n全部通過：${passed} 項`);
