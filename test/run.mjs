@@ -903,7 +903,7 @@ console.log('P5 結算與公布');
 console.log('P7 AI 評審');
 function fakeGemini() {
   const g = {
-    model: 'fake-model', uploads: [], ticks: {}, deleted: [], replies: [], calls: 0, lastPrompt: '', uploadFail: false, fileFailed: false,
+    model: 'fake-model', uploads: [], ticks: {}, deleted: [], deletedJobs: [], jobs: {}, replies: [], calls: 0, lastPrompt: '', uploadFail: false, fileFailed: false,
     async uploadFromUrl(url) {
       if (g.uploadFail) throw new Error('下載影片失敗（HTTP 404）');
       g.uploads.push(url);
@@ -916,14 +916,25 @@ function fakeGemini() {
       return { name, uri: 'https://gemini.test/' + name, state: g.fileFailed ? 'FAILED' : 'ACTIVE' };
     },
     async deleteFile(name) { g.deleted.push(name); },
-    async generate(uri, prompt) {
+    // 背景評分：送出後第一次查詢還在進行中，第二次完成。回覆可以是 JSON 物件、字串、Error（送出失敗）、{jobFail: '原因'}（評分失敗）
+    async startJob(uri, prompt) {
       g.calls++;
       g.lastPrompt = prompt;
       await new Promise(r => setTimeout(r, 5));
       const r = g.replies.shift();
       if (r instanceof Error) throw r;
-      return { text: typeof r === 'string' ? r : JSON.stringify(r), usage: { totalTokenCount: 1234 }, finishReason: 'STOP' };
+      const id = 'job' + g.calls;
+      g.jobs[id] = { polls: 1, reply: r };
+      return { id, status: 'in_progress', attempts: 1 };
     },
+    async getJob(id) {
+      const j = g.jobs[id];
+      if (!j) { const e = new Error('查詢 AI 評分失敗（HTTP 404）'); e.status = 404; throw e; }
+      if (j.polls > 0) { j.polls--; return { status: 'in_progress', text: '', usage: null, error: '' }; }
+      if (j.reply && j.reply.jobFail) return { status: 'failed', text: '', usage: null, error: j.reply.jobFail };
+      return { status: 'completed', text: typeof j.reply === 'string' ? j.reply : JSON.stringify(j.reply), usage: { total_tokens: 1234 }, error: '' };
+    },
+    async deleteJob(id) { g.deletedJobs.push(id); delete g.jobs[id]; },
   };
   return g;
 }
@@ -951,7 +962,7 @@ const aiReply = (scores, extra) => Object.assign({
   const aiSeat = board.slots.find(s => s.slot === 4);
   const runTo = async (teamId, rerun) => {     // 模擬後台：開始 → 一直查到不是進行中
     let r = await call('adminAiStart', admin, teamId, rerun);
-    for (let i = 0; i < 10 && ['uploading', 'processing', 'generating'].includes(r.status); i++) r = await call('adminAiStep', admin, r.id);
+    for (let i = 0; i < 10 && ['uploading', 'processing', 'generating', 'finishing'].includes(r.status); i++) r = await call('adminAiStep', admin, r.id);
     return r;
   };
   const aiScore = async code => (await call('adminAiOverview', admin)).rows.find(x => x.code === code).score;
@@ -973,7 +984,7 @@ const aiReply = (scores, extra) => Object.assign({
     for (const fn of ['adminAiOverview', 'adminAiStart', 'adminAiStep', 'adminAiFinalize', 'adminAiGetRun']) await expectErr(/不能使用此功能/, fn, judges.j1);
   });
 
-  await step('AI 評分：上傳鎖定版本 → 處理中 → 評分、驗證、自動送出到席位 4', async () => {
+  await step('AI 評分（非同步）：上傳 → 影片處理中 → 送出背景評分 → 評分中 → 驗證、自動送出到席位 4', async () => {
     g.replies.push(aiReply([30, 20, 18, 8]));
     let r = await call('adminAiStart', admin, team('team01'));
     assert.equal(r.status, 'processing');
@@ -982,11 +993,18 @@ const aiReply = (scores, extra) => Object.assign({
     assert.equal(r.status, 'processing', '影片還在處理');
     assert.equal(g.calls, 0);
     r = await call('adminAiStep', admin, r.id);
+    assert.equal(r.status, 'generating', '影片處理好，送出背景評分後立刻回應');
+    assert.equal(g.calls, 1);
+    assert.equal(db._tables.ai_runs.find(x => x.id === r.id).gemini_job, 'job1');
+    r = await call('adminAiStep', admin, r.id);
+    assert.equal(r.status, 'generating', 'Gemini 還在評分');
+    r = await call('adminAiStep', admin, r.id);
     assert.equal(r.status, 'done');
     assert.equal(r.result.items[ids[1]], 20);
     assert.equal(r.result.droppedEvidence, 4, '超出片長的時間點被丟掉');
     assert.deepEqual(r.result.evidence[ids[0]], [{ sec: 65, note: '示範' }]);
     assert.deepEqual(g.deleted, ['files/f1'], '評完刪除 Gemini 上的檔案');
+    assert.deepEqual(g.deletedJobs, ['job1'], '評完刪除 Gemini 上的評分紀錄');
     const s = await aiScore('team01');
     assert.deepEqual([s.status, s.total], ['submitted', 76]);
     assert.match(g.lastPrompt, /專題作品的應用及整合性（滿分 40）/);
@@ -1065,25 +1083,53 @@ const aiReply = (scores, extra) => Object.assign({
     assert.equal((await aiScore('team01')).total, 78, '失敗不影響已送出的 AI 評分');
   });
 
-  await step('同一步驟同時按兩次，只會送出一次評分請求；進行中不能再開始', async () => {
+  await step('同時查詢兩次：只送出一次評分、只寫入一次分數；進行中不能再開始', async () => {
     g.replies.push(aiReply([33, 20, 18, 8]));
     let r = await call('adminAiStart', admin, team('team01'), true);
     await expectErr(/正在進行中/, 'adminAiStart', admin, team('team01'), true);
-    r = await call('adminAiStep', admin, r.id);      // 處理中
+    r = await call('adminAiStep', admin, r.id);      // 影片處理中
     const before = g.calls;
+    await Promise.all([call('adminAiStep', admin, r.id), call('adminAiStep', admin, r.id)]);
+    assert.equal(g.calls - before, 1, '只送出一次評分');
+    await call('adminAiStep', admin, r.id);           // Gemini 評分中
+    const histBefore = db._tables.score_history.length;
     const [a, b] = await Promise.all([call('adminAiStep', admin, r.id), call('adminAiStep', admin, r.id)]);
-    assert.equal(g.calls - before, 1);
     assert.ok([a.status, b.status].includes('done'));
+    assert.equal(db._tables.score_history.length - histBefore, 2, '只寫入一次（退回舊分數＋送出新分數）');
+    assert.equal((await aiScore('team01')).total, 79);
   });
 
-  await step('評分中斷太久（例如關掉頁面）會被標成失敗，可以重新執行', async () => {
+  await step('Gemini 回報評分失敗、找不到評分紀錄 → 失敗並顯示原因', async () => {
+    g.replies.push({ jobFail: 'Internal error' });
+    let r = await runTo(team('team02'), true);
+    assert.equal(r.status, 'failed');
+    assert.match(r.error, /AI 評分失敗：Internal error/);
     g.replies.push(aiReply([33, 20, 18, 8]));
-    const r = await call('adminAiStart', admin, team('team02'), true);
-    db._tables.ai_runs.find(x => x.id === r.id).status = 'generating';
-    tick(7 * 60);
-    const r2 = await call('adminAiStep', admin, r.id);
-    assert.equal(r2.status, 'failed');
-    assert.match(r2.error, /逾時/);
+    r = await call('adminAiStart', admin, team('team02'), true);
+    r = await call('adminAiStep', admin, r.id);
+    r = await call('adminAiStep', admin, r.id);       // 送出 → generating
+    delete g.jobs[db._tables.ai_runs.find(x => x.id === r.id).gemini_job];
+    r = await call('adminAiStep', admin, r.id);
+    assert.equal(r.status, 'failed');
+    assert.match(r.error, /找不到這次評分/);
+    assert.equal((await aiScore('team02')).total, 77, '失敗不影響已送出的 AI 評分');
+  });
+
+  await step('中斷太久（關掉頁面、送出時中斷、評分超過 20 分鐘）會被標成失敗，可以重新執行', async () => {
+    g.replies.push(aiReply([33, 20, 18, 8]));
+    let r = await call('adminAiStart', admin, team('team02'), true);
+    db._tables.ai_runs.find(x => x.id === r.id).status = 'generating';   // 模擬：搶下送出步驟後函式被中止，沒有評分編號
+    tick(3 * 60);
+    r = await call('adminAiStep', admin, r.id);
+    assert.equal(r.status, 'failed');
+    assert.match(r.error, /送出評分時中斷/);
+    r = await call('adminAiStart', admin, team('team02'), true);
+    r = await call('adminAiStep', admin, r.id);
+    r = await call('adminAiStep', admin, r.id);       // generating（已送出）
+    tick(21 * 60);
+    r = await call('adminAiStep', admin, r.id);
+    assert.equal(r.status, 'failed');
+    assert.match(r.error, /超過 20 分鐘/);
     g.replies.length = 0;
   });
 
@@ -1127,18 +1173,17 @@ const aiReply = (scores, extra) => Object.assign({
 }
 console.log('P7 Gemini 用戶端（假的 HTTP，不會連到 Google）');
 {
-  const { createGemini } = await import('../supabase/functions/api/gemini.js');
-  const okBody = { candidates: [{ content: { parts: [{ text: '{"items":[]}' }] }, finishReason: 'STOP' }], usageMetadata: { totalTokenCount: 9 } };
-  const make = (statuses) => {
+  const { createGemini, interactionText } = await import('../supabase/functions/api/gemini.js');
+  const make = (responses) => {
     const seen = [], waits = [];
     let t = 0;
     const g = createGemini({
       apiKey: 'test-key', model: 'm',
       fetchImpl: async (url, opt) => {
-        seen.push({ url, key: opt.headers['x-goog-api-key'] });
-        const st = statuses.shift();
+        seen.push({ url, method: opt.method || 'GET', headers: opt.headers, body: opt.body ? JSON.parse(opt.body) : null });
+        const [st, body] = responses.shift();
         t += 2000;   // 每次請求花 2 秒
-        return new Response(JSON.stringify(st === 200 ? okBody : { error: { message: 'This model is currently experiencing high demand.' } }), { status: st });
+        return new Response(JSON.stringify(body || { error: { message: 'This model is currently experiencing high demand.' } }), { status: st });
       },
       sleep: async ms => { waits.push(ms); t += ms; },
       clock: () => t,
@@ -1146,22 +1191,42 @@ console.log('P7 Gemini 用戶端（假的 HTTP，不會連到 Google）');
     return { g, seen, waits };
   };
 
-  await step('評分請求遇到 503／429 自動重試，成功就回傳結果與嘗試次數', async () => {
-    const { g, seen, waits } = make([503, 429, 200]);
-    const r = await g.generate('https://gemini.test/files/a', 'prompt');
-    assert.equal(r.attempts, 3);
-    assert.equal(r.text, '{"items":[]}');
-    assert.deepEqual(waits, [4000, 10000]);
-    assert.ok(seen.every(s => /models\/m:generateContent$/.test(s.url) && s.key === 'test-key'));
+  await step('送出背景評分：Interactions API、background、影片在文字前面；503／429 自動重試', async () => {
+    const { g, seen, waits } = make([[503], [429], [200, { id: 'v1_abc', status: 'in_progress' }]]);
+    const r = await g.startJob('https://gemini.test/files/a', 'prompt');
+    assert.deepEqual([r.id, r.status, r.attempts], ['v1_abc', 'in_progress', 3]);
+    assert.deepEqual(waits, [3000, 8000]);
+    const s = seen[2];
+    assert.equal(s.url, 'https://generativelanguage.googleapis.com/v1beta/interactions');
+    assert.equal(s.method, 'POST');
+    assert.equal(s.headers['x-goog-api-key'], 'test-key');
+    assert.equal(s.body.model, 'm');
+    assert.equal(s.body.background, true);
+    assert.deepEqual(s.body.input.map(x => x.type), ['video', 'text']);
+    assert.equal(s.body.input[0].uri, 'https://gemini.test/files/a');
   });
 
   await step('重試 3 次都忙碌 → 失敗並註明已自動重試；400 之類的錯誤不重試', async () => {
-    let { g, waits } = make([503, 503, 503]);
-    await assert.rejects(g.generate('u', 'p'), e => /HTTP 503/.test(e.message) && /已自動重試，共 3 次/.test(e.message));
+    let { g, waits } = make([[503], [503], [503]]);
+    await assert.rejects(g.startJob('u', 'p'), e => /HTTP 503/.test(e.message) && /已自動重試，共 3 次/.test(e.message));
     assert.equal(waits.length, 2);
-    ({ g, waits } = make([400]));
-    await assert.rejects(g.generate('u', 'p'), e => /HTTP 400/.test(e.message) && !/重試/.test(e.message));
+    ({ g, waits } = make([[400, { error: { message: 'bad' } }]]));
+    await assert.rejects(g.startJob('u', 'p'), e => /HTTP 400/.test(e.message) && !/重試/.test(e.message));
     assert.equal(waits.length, 0);
+  });
+
+  await step('查詢背景評分：狀態、輸出文字（略過思考過程）、錯誤；404 帶狀態碼', async () => {
+    const done = { id: 'v1_abc', status: 'completed', usage: { total_tokens: 5 },
+      steps: [{ type: 'thought', content: [{ type: 'text', text: '想一想' }] }, { type: 'model_output', content: [{ type: 'text', text: '{"items":' }, { type: 'text', text: '[]}' }] }] };
+    const { g, seen } = make([[200, { id: 'v1_abc', status: 'in_progress' }], [200, done], [200, { status: 'failed', error: { message: 'quota' } }], [404, { error: { message: 'not found' } }]]);
+    assert.equal((await g.getJob('v1_abc')).status, 'in_progress');
+    const r = await g.getJob('v1_abc');
+    assert.deepEqual([r.status, r.text, r.usage.total_tokens], ['completed', '{"items":[]}', 5]);
+    assert.equal(seen[0].url, 'https://generativelanguage.googleapis.com/v1beta/interactions/v1_abc');
+    assert.deepEqual(await g.getJob('x'), { status: 'failed', text: '', usage: null, error: 'quota' });
+    await assert.rejects(g.getJob('gone'), e => e.status === 404);
+    assert.equal(interactionText({ output_text: 'A' }), 'A');
+    assert.equal(interactionText({ outputs: [{ type: 'thought', text: 'x' }, { type: 'text', text: 'B' }] }), 'B');
   });
 }
 

@@ -29,13 +29,22 @@ function mockGemini() {
     async uploadFromUrl() { const name = 'files/mock' + (++n); ready[name] = Date.now() + 3000; return { name, uri: 'mock://' + name, state: 'PROCESSING' }; },
     async getFile(name) { return { name, uri: 'mock://' + name, state: Date.now() >= ready[name] ? 'ACTIVE' : 'PROCESSING' }; },
     async deleteFile() {},
-    async generate(uri, prompt) {
-      await new Promise(r => setTimeout(r, 2000));
+    // 背景評分：送出後約 6 秒完成
+    jobs: {},
+    async startJob(uri, prompt) {
       const maxes = [...prompt.matchAll(/（滿分 (\d+)）/g)].map(m => Number(m[1]));
       const items = maxes.map((max, i) => ({ no: i + 1, score: (n % 3 === 0 && i === 3) ? null : Math.round(max * (0.6 + Math.random() * 0.35)),
         reason: '（模擬）依影片內容評分', evidence: [{ time: '0:0' + (i + 1), note: '（模擬）示範片段' }] }));
-      return { text: JSON.stringify({ items, strengths: '（模擬）作品完整，操作展示清楚，說明有條理。', improvements: '（模擬）可以補充測試數據與對照組，並說明限制。' }), usage: { totalTokenCount: 0 }, finishReason: 'STOP' };
+      const id = 'mockjob' + n;
+      this.jobs[id] = { at: Date.now() + 6000, text: JSON.stringify({ items, strengths: '（模擬）作品完整，操作展示清楚，說明有條理。', improvements: '（模擬）可以補充測試數據與對照組，並說明限制。' }) };
+      return { id, status: 'in_progress', attempts: 1 };
     },
+    async getJob(id) {
+      const j = this.jobs[id];
+      if (!j) { const e = new Error('查詢 AI 評分失敗（HTTP 404）'); e.status = 404; throw e; }
+      return Date.now() < j.at ? { status: 'in_progress', text: '', usage: null, error: '' } : { status: 'completed', text: j.text, usage: { total_tokens: 0 }, error: '' };
+    },
+    async deleteJob(id) { delete this.jobs[id]; },
   };
 }
 

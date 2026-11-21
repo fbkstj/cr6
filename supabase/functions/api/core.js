@@ -894,10 +894,11 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
   /* ───────────── AI 評審（P7，開發計畫書第 14 節） ───────────── */
 
   const AI_PROMPT_VERSION = 'v1';
-  const AI_STATUS = { uploading: '上傳影片中', processing: 'Gemini 處理影片中', generating: 'AI 評分中', done: '已完成',
+  const AI_STATUS = { uploading: '上傳影片中', processing: 'Gemini 處理影片中', generating: 'AI 評分中', finishing: '寫入評分中', done: '已完成',
     needs_review: '需要處理', finalized: '已補分完成', failed: '失敗' };
-  const AI_ACTIVE = ['uploading', 'processing', 'generating'];
-  const AI_STALE_MS = { uploading: 4 * 60 * 1000, generating: 6 * 60 * 1000 };   // 超過這個時間沒有進展就當作中斷
+  const AI_ACTIVE = ['uploading', 'processing', 'generating', 'finishing'];
+  // 超過這個時間沒有進展就當作中斷（generating 從送出背景評分起算；背景評分本身不受 Edge Function 時間上限影響）
+  const AI_STALE_MS = { uploading: 4 * 60 * 1000, starting: 2 * 60 * 1000, generating: 20 * 60 * 1000, finishing: 2 * 60 * 1000 };
 
   const mmss = sec => { sec = Math.max(0, Math.round(Number(sec) || 0)); return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`; };
   /** "3:15"、"1:02:03"、"75"、"75s" → 秒；看不懂回傳 null */
@@ -1070,7 +1071,11 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     return runView(await db.getAiRun(run.id));
   }
 
-  /** 第 2 步起：查影片處理進度；處理好就送出評分並驗證。前端重複呼叫直到狀態不是進行中 */
+  /**
+   * 第 2 步起（前端每幾秒呼叫一次，每次都很快回應）：
+   * processing：查影片處理進度，處理好就送出背景評分（Interactions API）→ generating
+   * generating：查背景評分；完成就搶下寫入權（finishing）→ 解析、驗證、送出
+   */
   async function adminAiStep(token, runId) {
     const acc = await auth(token, 'admin');
     const c = await aiComp(acc);
@@ -1078,32 +1083,55 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     let r = await db.getAiRun(runId);
     if (!r || r.competition_id !== c.id) fail('找不到這次 AI 評分');
     const age = now() - Date.parse(r.updated_at);
+    const cleanup = async () => {
+      if (r.gemini_file) await gemini.deleteFile(r.gemini_file);
+      if (r.gemini_job) await gemini.deleteJob(r.gemini_job);
+    };
     const failRun = async msg => {
       await db.updateAiRun(r.id, { status: 'failed', error: msg.slice(0, 500), updated_at: iso(now()), finished_at: iso(now()) });
-      if (r.gemini_file) await gemini.deleteFile(r.gemini_file);
+      await cleanup();
       return runView(await db.getAiRun(r.id));
     };
     if (r.status === 'uploading') return age > AI_STALE_MS.uploading ? failRun('上傳中斷，請重新執行') : runView(r);
-    if (r.status === 'generating') return age > AI_STALE_MS.generating ? failRun('AI 評分逾時，請重新執行') : runView(r);
-    if (r.status !== 'processing') return runView(r);
+    if (r.status === 'finishing') return age > AI_STALE_MS.finishing ? failRun('寫入評分時中斷，請重新執行') : runView(r);
+    if (!['processing', 'generating'].includes(r.status)) return runView(r);
     needScoringPhase(c);
 
-    let f;
-    try { f = await gemini.getFile(r.gemini_file); } catch (e) { return failRun(String(e && e.message || e)); }
-    if (f.state === 'FAILED') return failRun('Gemini 無法處理這支影片' + (f.error ? '：' + f.error : ''));
-    if (f.state !== 'ACTIVE') { await db.updateAiRun(r.id, { updated_at: iso(now()) }); return runView(await db.getAiRun(r.id)); }
-    // 搶下這一步（同時按兩次也只會評一次）
-    if (!(await db.updateAiRun(r.id, { status: 'generating', updated_at: iso(now()) }, 'processing'))) return runView(await db.getAiRun(r.id));
+    if (r.status === 'processing') {
+      let f;
+      try { f = await gemini.getFile(r.gemini_file); } catch (e) { return failRun(String(e && e.message || e)); }
+      if (f.state === 'FAILED') return failRun('Gemini 無法處理這支影片' + (f.error ? '：' + f.error : ''));
+      if (f.state !== 'ACTIVE') { await db.updateAiRun(r.id, { updated_at: iso(now()) }); return runView(await db.getAiRun(r.id)); }
+      // 搶下這一步（同時按兩次也只會送出一次）
+      if (!(await db.updateAiRun(r.id, { status: 'generating', updated_at: iso(now()) }, 'processing'))) return runView(await db.getAiRun(r.id));
+      const t = await db.getTeam(r.team_id);
+      const v = await db.getVersion(r.version_id);
+      try {
+        const job = await gemini.startJob(f.uri || r.gemini_uri, aiPrompt(c, t, v, await rubricView(c)));
+        await db.updateAiRun(r.id, { gemini_job: job.id, usage: { attempts: job.attempts }, updated_at: iso(now()) });
+      } catch (e) { return failRun(String(e && e.message || e)); }
+      return runView(await db.getAiRun(r.id));
+    }
+
+    // generating：等背景評分
+    if (!r.gemini_job) return age > AI_STALE_MS.starting ? failRun('送出評分時中斷，請重新執行') : runView(r);
+    if (age > AI_STALE_MS.generating) return failRun('AI 評分超過 20 分鐘沒有完成，請重新執行');
+    let job;
+    try { job = await gemini.getJob(r.gemini_job); } catch (e) {
+      return e.status === 404 ? failRun('Gemini 找不到這次評分（可能已過期），請重新執行') : runView(r);   // 查詢暫時失敗就下次再查
+    }
+    if (job.status === 'in_progress' || !job.status) return runView(r);
+    if (job.status !== 'completed') return failRun(`AI 評分${job.status === 'cancelled' ? '被取消' : '失敗'}${job.error ? '：' + job.error : `（${job.status}）`}`);
+    if (!(await db.updateAiRun(r.id, { status: 'finishing', updated_at: iso(now()) }, 'generating'))) return runView(await db.getAiRun(r.id));
 
     const t = await db.getTeam(r.team_id);
     const v = await db.getVersion(r.version_id);
     const rb = await rubricView(c);
-    let out;
-    try { out = await gemini.generate(f.uri || r.gemini_uri, aiPrompt(c, t, v, rb)); } catch (e) { return failRun(String(e && e.message || e)); }
-    const { result, problems } = aiParse(out.text, c, v, rb);
-    if (out.finishReason && !['STOP', 'MAX_TOKENS'].includes(out.finishReason) && !out.text) problems.unshift(`AI 沒有回應（${out.finishReason}）`);
-    await db.updateAiRun(r.id, { raw_output: String(out.text || '').slice(0, 20000), result, problems, usage: Object.assign({}, out.usage || {}, { attempts: out.attempts || 1 }), updated_at: iso(now()) });
-    await gemini.deleteFile(r.gemini_file);
+    const { result, problems } = aiParse(job.text, c, v, rb);
+    if (!job.text) problems.unshift('AI 沒有回傳內容');
+    await db.updateAiRun(r.id, { raw_output: String(job.text || '').slice(0, 20000), result, problems,
+      usage: Object.assign({}, r.usage || {}, job.usage || {}), updated_at: iso(now()) });
+    await cleanup();
     r = await db.getAiRun(r.id);
     if (problems.length) {
       await db.updateAiRun(r.id, { status: 'needs_review', finished_at: iso(now()), updated_at: iso(now()) });

@@ -372,13 +372,18 @@ function downloadCsv(filename, csv) {
 
 /* ───────────── AI 評分（P7） ───────────── */
 const AI = { data: null, running: new Set(), all: false, stop: false };
-const AI_CHIP = { uploading: 'info', processing: 'info', generating: 'info', done: 'ok', needs_review: 'warn', finalized: 'ok', failed: 'bad' };
-const aiActive = run => run && ['uploading', 'processing', 'generating'].includes(run.status);
+const AI_CHIP = { uploading: 'info', processing: 'info', generating: 'info', finishing: 'info', done: 'ok', needs_review: 'warn', finalized: 'ok', failed: 'bad' };
+const aiActive = run => run && ['uploading', 'processing', 'generating', 'finishing'].includes(run.status);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function viewAi() {
   main.innerHTML = '<div class="card"><p class="muted">載入中…</p></div>';
-  call('adminAiOverview').then(d => { AI.data = d; drawAi(); })
+  call('adminAiOverview').then(d => {
+    AI.data = d;
+    drawAi();
+    // 重新整理或回到這個分頁時，接著查詢還在進行中的評分
+    d.rows.filter(r => aiActive(r.run) && !AI.running.has(r.teamId)).forEach(r => runAiOne(r.teamId, false, r.run));
+  })
     .catch(e => { main.innerHTML = `<div class="card notice bad">${esc(e.message)}</div>`; });
   return null;
 }
@@ -399,7 +404,7 @@ function drawAi() {
     ${head}
     <p class="muted small" style="margin:0">AI 看鎖定版本的影片，依評分表四項給分並寫評語；結果驗證通過就自動送出，算成一位評審。
       有項目判斷不了或格式不對時標成「需要處理」，可以重跑，或由主辦人員補分並寫理由。${d.model ? `模型：<span class="mono">${esc(d.model)}</span>。` : ''}
-      一件大約 1～3 分鐘；執行中請不要關閉這個頁面（關掉的話，之後重新執行即可）。</p>
+      AI 在 Google 背景評分，一件大約 1～5 分鐘；這個頁面每 5 秒查一次結果。中途關掉頁面也沒關係，回到這個分頁會接著查。</p>
   </div>
   <div class="card">
     <div class="table-wrap"><table>
@@ -425,17 +430,22 @@ function drawAi() {
   </div>`;
 }
 
-/** 執行一件：開始 → 每 4 秒查一次，直到不是進行中 */
-async function runAiOne(teamId, rerun) {
+/** 執行一件：開始（或接著查詢進行中的那次）→ 每 5 秒查一次，直到不是進行中。伺服器每次都很快回應，AI 在 Google 背景評分 */
+async function runAiOne(teamId, rerun, resumeRun) {
+  if (AI.running.has(teamId)) return null;
   AI.running.add(teamId);
   drawAi();
   try {
-    let r = await call('adminAiStart', teamId, !!rerun);
+    let r = resumeRun || await call('adminAiStart', teamId, !!rerun);
     const row = () => AI.data.rows.find(x => x.teamId === teamId);
     row().run = r; drawAi();
-    for (let i = 0; i < 120 && aiActive(r); i++) {
-      await sleep(i === 0 ? 1500 : 4000);
-      r = await call('adminAiStep', r.id);
+    let netErrors = 0;
+    for (let i = 0; i < 300 && aiActive(r); i++) {     // 最多約 25 分鐘（伺服器 20 分鐘沒完成就判定失敗）
+      await sleep(i === 0 ? 1500 : 5000);
+      try { r = await call('adminAiStep', r.id); netErrors = 0; } catch (e) {
+        if (++netErrors >= 5) throw e;                   // 網路偶爾不穩就下次再查
+        continue;
+      }
       row().run = r; drawAi();
     }
     const code = row().code;
@@ -455,7 +465,7 @@ async function runAiOne(teamId, rerun) {
 
 async function runAiAll() {
   const ids = AI.data.rows.filter(r => r.score.status !== 'submitted' && !aiActive(r.run) && !(r.run && r.run.status === 'needs_review')).map(r => r.teamId);
-  if (!(await confirmBox(`<h2>全部執行 AI 評分</h2><p>依序評 ${ids.length} 件還沒有 AI 評分的作品（每件約 1～3 分鐘）。執行中請不要關閉這個頁面。</p>`, '開始'))) return;
+  if (!(await confirmBox(`<h2>全部執行 AI 評分</h2><p>依序評 ${ids.length} 件還沒有 AI 評分的作品（每件約 1～5 分鐘，一件接一件）。「全部執行」要開著這個頁面才會繼續送出下一件。</p>`, '開始'))) return;
   AI.all = true; AI.stop = false;
   for (const id of ids) {
     if (AI.stop) break;
