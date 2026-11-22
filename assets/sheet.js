@@ -69,15 +69,15 @@ function averageSheet(data, cat) {
   return { key: cat.category + '-avg', label: `${cat.label}｜平均`, html: sheetHtml(`${data.name}評分表(${cat.label})　成績總表`, head, body, '總分為各評審總分的平均；名次為本組別內的名次。') };
 }
 
-/** 某一組別、某一位評審的成績表（和 Word 檔一樣：編號、題目、各項分數、總分、評語） */
+/** 某一組別、某一位評審的成績表（和 Word 檔一樣：編號、題目、各項分數、總分、評語；另有建議欄） */
 function judgeSheet(data, cat, slot) {
   const items = cat.items;
-  const head = th('編號', 'c-no') + th('題目', 'c-title') + (items ? items.map(i => th(itemHead(i), 'c-item')).join('') : '') + th('總分', 'c-total') + th('評語', 'c-comment');
+  const head = th('編號', 'c-no') + th('題目', 'c-title') + (items ? items.map(i => th(itemHead(i), 'c-item')).join('') : '') + th('總分', 'c-total') + th('評語<br>(優點)', 'c-comment') + th('建議<br>(改進)', 'c-comment');
   const body = numbered(cat).map(t => {
     const j = t.judges.find(x => x.slot === slot);
     const cells = items ? items.map(i => `<td class="num">${j && j.items && j.items[i.id] !== undefined && j.items[i.id] !== null ? esc(j.items[i.id]) : ''}</td>`).join('') : '';
-    const comment = j ? `${j.strengths ? `<b>優點：</b>${esc(j.strengths)}` : ''}${j.strengths && j.improvements ? '<br>' : ''}${j.improvements ? `<b>建議：</b>${esc(j.improvements)}` : ''}` : '';
-    return `<tr class="tall"><td class="c-no">${esc(t.no)}</td><td>${titleCell(t)}</td>${cells}<td class="num"><b>${j ? esc(j.total) : ''}</b></td><td class="c-comment">${comment}</td></tr>`;
+    const nl = x => esc(x).replace(/\n/g, '<br>');
+    return `<tr class="tall"><td class="c-no">${esc(t.no)}</td><td>${titleCell(t)}</td>${cells}<td class="num"><b>${j ? esc(j.total) : ''}</b></td><td class="c-comment">${j ? nl(j.strengths || '') : ''}</td><td class="c-comment">${j ? nl(j.improvements || '') : ''}</td></tr>`;
   }).join('');
   return { key: `${cat.category}-j${slot}`, label: `${cat.label}｜評審${slot}`, html: sheetHtml(`${data.name}評分表(${cat.label})　評審${slot}`, head, body, '') };
 }
@@ -103,22 +103,35 @@ function loadPdfLib() {
   return pdfLoading;
 }
 
-/** 把一批成績表轉成 PDF 下載（A4 橫式，一張一頁） */
+/** 把一批成績表轉成 PDF 下載（A4 橫式，一張一頁；太長的表自動接到下一頁） */
 export async function downloadPdf(sheets, filename) {
   await loadPdfLib();
+  // 要排在頁面最上方、而且是看得到的（不是 fixed、也不是負 z-index），否則 html2canvas 會轉出空白；
+  // 所以先用白色遮罩蓋住整個畫面，轉完再移除
+  const cover = document.createElement('div');
+  cover.className = 'sheet-pdf-cover';
+  cover.textContent = '產生 PDF 中…';
+  // 外層 host 負責擺在畫面最上方；交給 html2pdf 的 box 本身不能是 absolute/fixed（高度會變 0，轉出空白頁）
+  const host = document.createElement('div');
+  host.className = 'sheet-pdf-root';
   const box = document.createElement('div');
-  box.className = 'sheet-pdf-root';
+  box.className = 'sheet-pdf-box';
   box.innerHTML = sheets.map((s, i) => i ? s.html.replace('<section class="sheet"', '<section class="sheet sheet-brk"') : s.html).join('');
-  document.body.appendChild(box);
+  const oldY = window.scrollY;
+  host.appendChild(box);
+  document.body.appendChild(host);
+  document.body.appendChild(cover);
+  window.scrollTo(0, 0);
   try {
+    if (document.fonts && document.fonts.ready) await document.fonts.ready;
     await window.html2pdf().set({
       margin: [8, 10, 8, 10], filename,
       image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', windowWidth: 1080 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', windowWidth: 1080, scrollX: 0, scrollY: 0 },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
       pagebreak: { mode: ['css'], before: '.sheet-brk', avoid: 'tr' },
     }).from(box).save();
-  } finally { box.remove(); }
+  } finally { host.remove(); cover.remove(); window.scrollTo(0, oldY); }
 }
 
 /** 在 container 放上「成績表」面板：選擇要看的表、網頁預覽、下載 PDF */

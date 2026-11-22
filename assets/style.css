@@ -148,11 +148,12 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 .sheet-table .c-no { width: 44px; } .sheet-table .c-title { width: 150px; } .sheet-table .c-rank { width: 54px; }
 .sheet-table .c-total { width: 62px; } .sheet-table .c-j { width: 58px; } .sheet-table .c-item { width: 96px; }
 .sheet-table td.num { text-align: center; }
-.sheet-table tr.tall td { height: 78px; }
+.sheet-table tr.tall td { height: 96px; }
 .sheet-table .c-comment { font-size: 13px; line-height: 1.45; }
 .sheet-note { font-size: 13px; margin: 6px 0 0; color: #000; }
-.sheet-pdf-root { position: fixed; left: 0; top: 0; z-index: -1; background: #fff; }
-.sheet-pdf-root .sheet + .sheet { page-break-before: always; }
+.sheet-pdf-root { position: absolute; left: 0; top: 0; width: 1040px; background: #fff; z-index: 0; }   /* 不能用 fixed 或負的 z-index：轉出來會是空白頁 */
+.sheet-pdf-box { width: 1040px; background: #fff; }
+.sheet-pdf-cover { position: fixed; inset: 0; z-index: 99999; background: #fff; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; color: #333; }
 @media print { .sheet-scroll { border: 0; padding: 0; } }
 @page { size: A4 landscape; margin: 8mm 10mm; }
 .print-all { background: #fff; }

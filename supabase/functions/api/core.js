@@ -646,7 +646,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
         note: sv.status === 'others' ? '這件作品已由前任評審完成評分，你不需要再評。'
           : sv.inherited ? '這個席位原本由其他評審負責，請重新完整評分。' : '',
       },
-      canEdit: SCORING_PHASES.includes(c.phase) && sv.status !== 'submitted' && sv.status !== 'others',
+      canEdit: SCORING_PHASES.includes(c.phase) && sv.status !== 'others',
     };
   }
 

@@ -191,14 +191,13 @@ export function createMemDb() {
       improvements = String(improvements || '').trim();
       if (strengths.length > 2000 || improvements.length > 2000) raise('評語最多 2000 字');
       let s = t.scores.find(x => x.team_id === teamId && x.slot_no === slotRow.slot_no);
-      if (s && s.status === 'submitted') raise('已經正式送出，需要主辦方退回才能修改');
       if (submit) {
         const missing = ritems.length - Object.keys(clean).length;
         if (missing) raise(`還有 ${missing} 個項目沒有給分`);
         if ([...strengths].length < c.min_comment_chars) raise(`「作品優點」至少要 ${c.min_comment_chars} 個字`);
         if ([...improvements].length < c.min_comment_chars) raise(`「改進建議」至少要 ${c.min_comment_chars} 個字`);
       }
-      const prevReturned = !!s && s.status === 'returned';
+      const prevReturned = !!s && (s.status === 'returned' || s.status === 'submitted');
       const now = nowIso();
       if (!s) {
         s = { id: crypto.randomUUID(), competition_id: c.id, team_id: teamId, slot_no: slotRow.slot_no };
@@ -206,7 +205,7 @@ export function createMemDb() {
       }
       Object.assign(s, {
         version_id: lock.version_id, account_id: accountId, items: clean,
-        status: submit ? 'submitted' : (prevReturned ? 'returned' : 'draft'),
+        status: submit ? 'submitted' : (s.status === 'returned' ? 'returned' : 'draft'),
         total: submit ? tot : null, strengths, improvements, submitted_at: submit ? now : null, updated_at: now,
       });
       if (submit) t.score_history.push({ id: ++seq, score_id: s.id, action: prevReturned ? 'resubmit' : 'submit', snapshot: { items: clean, total: tot, strengths, improvements, account: accountId }, actor: accountId, reason: '', at: now });

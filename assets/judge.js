@@ -1,4 +1,4 @@
-// 評審頁（P4）：作品清單、看片評分、暫存、正式送出
+// 評審頁（P4）：作品清單、看片評分、修改（儲存）、送出；送出後仍可持續修改
 import { call, requireRole, logout, esc, fmtTime, fmtDur, toast, dialogValues, confirmBox, busy, devBanner } from './app.js';
 
 const main = document.getElementById('main');
@@ -22,7 +22,7 @@ async function showList() {
       <span><b>已完成 ${r.done} / ${r.works.length}</b></span>
     </div>
     <div class="progress" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><span style="width:${pct}%"></span></div>
-    ${r.canEdit ? '<p class="muted small" style="margin:0">點作品開始評分。可以先暫存，全部確認後再正式送出；送出後要由主辦單位退回才能修改。</p>'
+    ${r.canEdit ? '<p class="muted small" style="margin:0">點作品開始評分。按「修改」先儲存，確認後按「送出」；送出後仍然可以回來修改，修改完再按「送出」即可（評分階段結束前都可以）。</p>'
       : '<p class="muted small" style="margin:0">評分已經結束，只能查看。</p>'}
   </div>
   ${[['project', '專題組'], ['creative', '創意組']].map(([cat, label]) => {
@@ -68,9 +68,9 @@ async function showWork(teamId) {
       </div>
     </div>
     <form class="card stack" id="scoreForm" autocomplete="off">
-      ${sc.returnReason ? `<div class="notice warn"><b>主辦單位退回：</b>${esc(sc.returnReason)}<br><span class="small">請修改後重新正式送出。</span></div>` : ''}
+      ${sc.returnReason ? `<div class="notice warn"><b>主辦單位退回：</b>${esc(sc.returnReason)}<br><span class="small">請修改後重新送出。</span></div>` : ''}
       ${sc.note ? `<div class="notice">${esc(sc.note)}</div>` : ''}
-      ${sc.status === 'submitted' ? `<div class="notice ok">已於 ${fmtTime(sc.submittedAt)} 正式送出。如需修改，請聯絡主辦單位退回。</div>` : ''}
+      ${sc.status === 'submitted' ? `<div class="notice ok">已於 ${fmtTime(sc.submittedAt)} 送出。需要時可以直接修改：按「修改」儲存草稿（會回到「暫存中」），改好再按「送出」。</div>` : ''}
       <div class="row" style="justify-content:space-between;align-items:baseline">
         <h2 style="margin:0">評分</h2>
         <span><span class="total" id="total">—</span> <span class="muted">/ ${w.rubric.total}</span></span>
@@ -98,8 +98,8 @@ async function showWork(teamId) {
       <p class="muted small" style="margin:0">評語會公開給學生看，顯示為「評審${w.slot}」，不會顯示你的姓名。</p>
       ${ro ? '' : `<div class="row" style="justify-content:flex-end">
         <span class="muted small" id="saveState"></span>
-        <button class="btn" type="button" data-act="draft">暫存</button>
-        <button class="btn primary" type="submit">正式送出</button>
+        <button class="btn" type="button" data-act="draft">修改</button>
+        <button class="btn primary" type="submit">送出</button>
       </div>`}
     </form>
   </div>`;
@@ -140,32 +140,32 @@ async function save(submit, btn) {
   const w = S.work, data = readForm(), t = updateTotals();
   if (t.bad) { toast('有分數超出範圍，請檢查紅框的欄位', 'bad'); return; }
   if (submit) {
-    const ok = await confirmBox(`<h2>正式送出評分</h2>
+    const ok = await confirmBox(`<h2>送出評分</h2>
       <p>${esc(w.team.code)}　${esc(w.team.workTitle || '')}</p>
       <table><tbody>${w.rubric.items.map(it => `<tr><td>${esc(it.title)}</td><td style="text-align:right">${data.items[it.id] ?? '<span style="color:var(--bad)">未填</span>'} / ${it.max}</td></tr>`).join('')}
       <tr><th>總分</th><th style="text-align:right">${t.tot} / ${w.rubric.total}</th></tr></tbody></table>
-      <div class="notice warn">送出後就不能自己修改，需要由主辦單位退回。</div>`, '確定送出');
+      <div class="notice warn">送出後仍可回來修改：按「修改」儲存草稿，改好再按「送出」。</div>`, '確定送出');
     if (!ok) return;
   }
   const r = await busy(btn, () => call(submit ? 'judgeSubmit' : 'judgeSaveDraft', w.team.id, data));
   if (!r) return;
   S.dirty = false;
   if (submit) {
-    toast(`已正式送出：${r.total} 分`);
+    toast(`已送出：${r.total} 分`);
     // 回到清單時把網址也改回來，否則再點同一件作品網址不會變、打不開
     if (location.hash) { lastHash = ''; history.replaceState(null, '', location.pathname); }
     await showList();
   }
   else {
-    toast('已暫存');
+    toast('已儲存修改（尚未送出）');
     const st = document.getElementById('saveState');
-    if (st) st.textContent = '已暫存 ' + new Intl.DateTimeFormat('zh-TW', { timeZone: 'Asia/Taipei', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
+    if (st) st.textContent = '已儲存 ' + new Intl.DateTimeFormat('zh-TW', { timeZone: 'Asia/Taipei', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
   }
 }
 
 async function leaveIfOk() {
   if (!S.dirty) return true;
-  return confirmBox('<p>有還沒暫存的變更，確定要離開嗎？</p>', '離開', true);
+  return confirmBox('<p>有還沒儲存的變更，確定要離開嗎？</p>', '離開', true);
 }
 
 /* ───────────── 事件 ───────────── */

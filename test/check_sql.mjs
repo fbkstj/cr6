@@ -157,7 +157,9 @@ await expectFail('正式送出要每項都給分', `select judge_save($1,$2,$3::
 await expectFail('正式送出評語要達最少字數', `select judge_save($1,$2,$3::jsonb,'好','很好',true)`, [tid, j[0], sc(40, 20, 10)], /至少要 10 個字/);
 r1 = (await save(j[0], tid, sc(40, 25, 15), okText, '可以補充測試數據與對照組', true)).rows[0].r;
 r1.status === 'submitted' && r1.total === 80 ? ok('正式送出：總分由資料庫計算 = 80') : bad('送出', JSON.stringify(r1));
-await expectFail('送出後不能再改', `select judge_save($1,$2,$3::jsonb,$4,$4,false)`, [tid, j[0], sc(1, 1, 1), okText], /需要主辦方退回/);
+await expectOk('送出後評審可以修改（回到暫存中）', `select judge_save($1,$2,$3::jsonb,$4,$4,false)`, [tid, j[0], sc(1, 1, 1), okText]);
+r1 = (await save(j[0], tid, sc(40, 25, 15), okText, '可以補充測試數據與對照組', true)).rows[0].r;
+r1.status === 'submitted' && r1.total === 80 ? ok('修改後再送出 = 80') : bad('再送出', JSON.stringify(r1));
 const sid = (await db.query(`select id from scores where team_id=$1 and slot_no=1`, [tid])).rows[0].id;
 await expectFail('退回必須填原因', `select return_score($1,$2,'  ')`, [sid, good], /必須填寫原因/);
 await expectOk('主辦方退回評分', `select return_score($1,$2,'第二項分數請再確認')`, [sid, good]);
@@ -169,7 +171,7 @@ r1.status === 'returned' ? ok('退回後暫存仍維持「已退回」狀態') :
 r1 = (await save(j[0], tid, sc(40, 20, 15), okText, '可以補充測試數據與對照組', true)).rows[0].r;
 r1.status === 'submitted' && r1.total === 75 ? ok('修改後重新送出 = 75') : bad('重送', JSON.stringify(r1));
 const hist = (await db.query(`select action, reason from score_history where score_id=$1 order by id`, [sid])).rows.map(h => h.action + (h.reason ? ':' + h.reason : ''));
-JSON.stringify(hist) === JSON.stringify(['submit', 'return:第二項分數請再確認', 'resubmit']) ? ok('更正歷程：submit → return（原因）→ resubmit') : bad('歷程', JSON.stringify(hist));
+JSON.stringify(hist) === JSON.stringify(['submit', 'submit', 'return:第二項分數請再確認', 'resubmit']) ? ok('更正歷程：submit → return（原因）→ resubmit') : bad('歷程', JSON.stringify(hist));
 await db.query(`insert into scores(competition_id, team_id, version_id, slot_no, account_id) values($1,$2,$3,9,$4)`, [cid, tid, vid, j[1]]).then(() => bad('席位 9', '應該失敗'), () => ok('席位編號超過 6 被資料庫拒絕'));
 const fp4 = (await db.query(`select has_function_privilege('anon','judge_save(uuid,uuid,jsonb,text,text,boolean)','execute') a, has_function_privilege('anon','return_score(uuid,uuid,text)','execute') b`)).rows[0];
 !fp4.a && !fp4.b ? ok('anon 不能執行評分與退回函式') : bad('函式權限', JSON.stringify(fp4));

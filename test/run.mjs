@@ -598,11 +598,16 @@ console.log('P4 評審評分');
     assert.equal(l.works.find(w => w.code === 'team01').total, 83);
   });
 
-  await step('送出後評審不能再改（暫存、送出都被擋）', async () => {
-    await expectErr(/需要主辦方退回/, 'judgeSaveDraft', j1, team('team01'), { items: items(1, 1, 1, 1) });
-    await expectErr(/需要主辦方退回/, 'judgeSubmit', j1, team('team01'), { items: items(1, 1, 1, 1), ...GOOD });
-    assert.equal((await call('judgeGetWork', j1, team('team01'))).canEdit, false);
+  await step('送出後評審可以持續修改：按「修改」回到暫存中，再「送出」', async () => {
+    assert.equal((await call('judgeGetWork', j1, team('team01'))).canEdit, true);
+    const d = await call('judgeSaveDraft', j1, team('team01'), { items: items(30, 20, 20, 8), ...GOOD });
+    assert.equal(d.status, 'draft');
+    assert.equal((await call('judgeListWorks', j1)).done, 0);
+    const r = await call('judgeSubmit', j1, team('team01'), { items: items(35, 20, 20, 8), ...GOOD });
+    assert.equal(r.status, 'submitted');
+    assert.equal(r.total, 83);
   });
+
 
   await step('評審讀不到別人的評分（P1 延後的驗收項目）', async () => {
     const w = await call('judgeGetWork', j2, team('team01'));
@@ -649,11 +654,11 @@ console.log('P4 評審評分');
 
   await step('更正歷程保留：送出 → 退回（原因、操作人）→ 重新送出', async () => {
     const d = await call('adminGetScore', admin, sid);
-    assert.deepEqual(d.history.map(h => h.action), ['submit', 'return', 'resubmit']);
-    assert.equal(d.history[1].actor, '主辦人員');
-    assert.match(d.history[1].reason, /課程相關/);
+    assert.deepEqual(d.history.map(h => h.action), ['submit', 'submit', 'return', 'resubmit']);
+    assert.equal(d.history[2].actor, '主辦人員');
+    assert.match(d.history[2].reason, /課程相關/);
     assert.equal(d.history[0].total, 83);
-    assert.equal(d.history[2].total, 78);
+    assert.equal(d.history[3].total, 78);
   });
 
   await step('替補評審：前任已送出的不用再評、前任的暫存不會帶給替補者', async () => {
