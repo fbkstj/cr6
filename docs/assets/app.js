@@ -115,7 +115,20 @@ export async function busy(btn, fn) {
   try { return await fn(); } catch (e) { toast(e.message, 'bad'); return undefined; } finally { if (btn) btn.disabled = false; }
 }
 
+/** 網頁更新時間：用網頁檔案的 Last-Modified（GitHub Pages 每次發布都會更新），不用手動維護 */
+function updateStamp() {
+  const t = new Date(document.lastModified);
+  if (isDev || isNaN(t)) return;
+  const p = n => String(n).padStart(2, '0');
+  const el = document.createElement('div');
+  el.className = 'update-stamp';
+  el.textContent = `網頁更新：${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}`;
+  el.title = '這個網頁最近一次發布的時間';
+  document.body.appendChild(el);
+}
+
 export function devBanner() {
+  updateStamp();
   if (!isDev) return;
   const b = document.createElement('div');
   b.className = 'dev-banner';
