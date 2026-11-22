@@ -391,7 +391,9 @@ function viewAi() {
 function drawAi() {
   if (S.tab !== 'ai' || !AI.data) return;
   const d = AI.data;
+  d.canImport = d.enabled && ['judging', 'settling'].includes(d.phase);
   const head = !d.enabled ? '<div class="notice">這個競賽沒有開啟 AI 評審（在「競賽設定」開啟，開始評分後就不能改）。</div>'
+    : !d.configured && d.canImport ? '<div class="notice">AI 評分請用外部 AI 評完後存成檔案，再按「匯入 AI 評分檔」（伺服器沒有設定 Gemini 金鑰，不能在這裡直接執行 AI）。</div>'
     : !d.configured ? '<div class="notice bad">伺服器還沒有設定 <span class="mono">GEMINI_API_KEY</span>，不能執行 AI 評分。請見部署說明。</div>'
     : ['setup', 'collecting'].includes(d.phase) ? '<div class="notice">開始評分（鎖定版本）之後才能執行 AI 評分。</div>'
     : !d.canRun ? `<div class="notice">目前是「${esc(d.phaseLabel)}」階段，不能再執行 AI 評分。</div>` : '';
@@ -399,12 +401,13 @@ function drawAi() {
   main.innerHTML = `
   <div class="card stack">
     <div class="row" style="justify-content:space-between"><h2 style="margin:0">AI 評分${d.aiSlot ? `（評審${d.aiSlot}）` : ''}</h2>
-      <div class="row">${d.canRun ? (AI.all ? '<button class="btn" data-act="ai-stop">停止全部執行</button>'
+      <div class="row">${d.canImport ? '<button class="btn primary" data-act="ai-import">匯入 AI 評分檔…</button>' : ''}${d.canRun ? (AI.all ? '<button class="btn" data-act="ai-stop">停止全部執行</button>'
         : `<button class="btn primary" data-act="ai-all" ${todo.length ? '' : 'disabled'}>全部執行（${todo.length} 件未評）</button>`) : ''}</div></div>
     ${head}
     <p class="muted small" style="margin:0">AI 看鎖定版本的影片，依評分表四項給分並寫評語；結果驗證通過就自動送出，算成一位評審。
       有項目判斷不了或格式不對時標成「需要處理」，可以重跑，或由主辦人員補分並寫理由。${d.model ? `模型：<span class="mono">${esc(d.model)}</span>。` : ''}
       AI 在 Google 背景評分，一件大約 1～5 分鐘；這個頁面每 5 秒查一次結果。中途關掉頁面也沒關係，回到這個分頁會接著查。<br>
+      <b>匯入檔案：</b>用外部 AI（例如 Gemini 網頁版）評完，每組存成一個 JSON 檔（檔名含組別，例如 team01.json），按「匯入 AI 評分檔」一次選多個，確認分數後送出；伺服器用同樣的規則驗證，通過就算成一位評審。格式見 tools/README.md。<br>
       在這裡執行常失敗時，可以改在主辦方電腦上執行 <span class="mono">node tools/ai_score.mjs --all</span>（沒有時間限制，結果一樣會出現在這裡；見 tools/README.md）。</p>
   </div>
   <div class="card">
@@ -502,6 +505,66 @@ async function aiDetail(id) {
       ${run.manual.commentsEdited ? '<br>評語有修改' : ''}</div>` : ''}
     ${run.rawOutput ? `<details><summary class="small">AI 原始回應</summary><pre class="small" style="white-space:pre-wrap;max-height:240px;overflow:auto">${esc(run.rawOutput)}</pre></details>` : ''}`,
   [{ label: '關閉', value: true, primary: true }]);
+}
+
+/** 匯入外部 AI 評好的檔案：每個檔案一組（檔名要含 team01 這樣的組別），先預覽、確認後才送出 */
+function aiImportPick() {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.json,application/json'; input.multiple = true;
+  input.onchange = () => { if (input.files.length) aiImportRun([...input.files]).catch(e => toast(e.message, 'bad')); };
+  input.click();
+}
+
+async function aiImportRun(files) {
+  const d = AI.data;
+  const list = [];
+  for (const f of files) {
+    const m = /team\d{2}/i.exec(f.name);
+    const it = { file: f.name, problems: [] };
+    const row = m ? d.rows.find(r => r.code === m[0].toLowerCase()) : null;
+    if (!m) it.problems.push('檔名要含組別（例如 team01.json）');
+    else if (!row) it.problems.push(`${m[0].toLowerCase()} 不在評分名單中`);
+    else { it.row = row; it.code = row.code; }
+    try {
+      const j = JSON.parse((await f.text()).replace(/^\uFEFF/, ''));
+      if (!j || !Array.isArray(j.items)) it.problems.push('缺少 items 陣列');
+      else {
+        Object.keys(j).filter(k => k.startsWith('_')).forEach(k => delete j[k]);
+        it.scores = j.items.map(x => (x && Number.isInteger(x.score)) ? x.score : null);
+        if (it.scores.length !== d.items.length) it.problems.push(`要有 ${d.items.length} 個評分項目，檔案裡有 ${it.scores.length} 個`);
+        if (it.scores.some(x => x === null)) it.problems.push('有項目的分數不是整數');
+        it.total = it.scores.reduce((a, b) => a + (b || 0), 0);
+        it.text = JSON.stringify(j);
+      }
+    } catch (e) { it.problems.push('不是正確的 JSON'); }
+    if (!it.problems.length && aiActive(it.row.run)) it.problems.push('AI 評分進行中');
+    it.rerun = !it.problems.length && it.row.score.status === 'submitted';
+    list.push(it);
+  }
+  list.sort((a, b) => String(a.code || a.file).localeCompare(String(b.code || b.file)));
+  const ok = list.filter(x => !x.problems.length);
+  const html = `<h2>匯入 AI 評分檔</h2>
+    <div class="table-wrap"><table><thead><tr><th>檔案</th><th>作品</th><th>分項</th><th>合計</th><th></th></tr></thead><tbody>
+    ${list.map(x => x.problems.length
+      ? `<tr><td>${esc(x.file)}</td><td colspan="4"><span class="chip bad">略過</span> ${x.problems.map(esc).join('；')}</td></tr>`
+      : `<tr><td>${esc(x.file)}</td><td><b>${esc(x.code)}</b> ${esc(x.row.workTitle)}</td><td>${x.scores.join('／')}</td><td><b>${x.total}</b></td>
+        <td>${x.rerun ? '<span class="chip warn">取代現有 AI 評分</span>' : ''}</td></tr>`).join('')}
+    </tbody></table></div>
+    <p class="muted small" style="margin:0">${ok.length ? `確認後 ${ok.length} 件會送出到評審${d.aiSlot}（AI）。伺服器還會再驗證分數範圍、時間點與評語字數，沒通過的會標成「需要處理」。` : '沒有可以匯入的檔案。'}</p>`;
+  if (!ok.length) { await dialog(html, [{ label: '關閉', value: true, primary: true }]); return; }
+  if (!(await confirmBox(html, `匯入 ${ok.length} 件`))) return;
+  const result = [];
+  for (const x of ok) {
+    try {
+      const b = await call('adminAiLocalBegin', x.row.teamId, x.rerun, '人工匯入（檔案）');
+      const r = await call('adminAiLocalFinish', b.runId, { text: x.text, usage: {} });
+      result.push(r.status === 'done' ? `✓ ${x.code} 完成，總分 ${Object.values(r.result.items).reduce((s, v) => s + v, 0)}`
+        : r.status === 'needs_review' ? `△ ${x.code} 需要處理：${(r.problems || []).join('；')}` : `✗ ${x.code} 失敗：${r.error || r.status}`);
+    } catch (e) { result.push(`✗ ${x.code} 失敗：${e.message}`); }
+  }
+  try { AI.data = await call('adminAiOverview'); } catch (e) { /* 忽略 */ }
+  drawAi();
+  await dialog(`<h2>匯入結果</h2><ul>${result.map(t => `<li>${esc(t)}</li>`).join('')}</ul>`, [{ label: '關閉', value: true, primary: true }]);
 }
 
 async function aiFix(id) {
@@ -709,6 +772,7 @@ main.addEventListener('click', async e => {
       await runAiOne(id, !!el.dataset.rerun);
       break;
     }
+    case 'ai-import': aiImportPick(); break;
     case 'ai-all': await runAiAll(); break;
     case 'ai-stop': AI.stop = true; toast('目前這件完成後停止'); break;
     case 'ai-detail': await aiDetail(id); break;
