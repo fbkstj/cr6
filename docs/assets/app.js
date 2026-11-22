@@ -124,7 +124,7 @@ function updateStamp() {
   el.className = 'update-stamp';
   el.textContent = `網頁更新：${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}`;
   el.title = '這個網頁最近一次發布的時間';
-  document.body.appendChild(el);
+  (document.querySelector('.topbar') || document.body).appendChild(el);   // 有頂端列就放在最右邊，沒有（登入頁）就固定在右上角
 }
 
 export function devBanner() {

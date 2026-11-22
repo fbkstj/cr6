@@ -1248,6 +1248,46 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     return runView(await db.getAiRun(r.id));
   }
 
+  /** 修改「暫存」的 AI 評分（分數與評語）；仍是暫存，不計入平均，要按「送出」（採用）才算數。修改內容留在這次紀錄與操作紀錄裡 */
+  async function adminAiEditDraft(token, runId, input) {
+    const acc = await auth(token, 'admin');
+    const c = await aiComp(acc);
+    needScoringPhase(c);
+    const r = await db.getAiRun(runId);
+    if (!r || r.competition_id !== c.id) fail('找不到這次 AI 評分');
+    if (r.status !== 'draft') fail('只有「暫存」的 AI 評分可以修改');
+    const latest = (await db.listAiRuns(c.id)).filter(x => x.team_id === r.team_id).sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)))[0];
+    if (latest && latest.id !== r.id) fail('這件作品已經有更新的 AI 評分紀錄，請重新整理');
+    input = input || {};
+    const rb = await rubricView(c);
+    const base = r.result || { items: {} };
+    const given = input.items && typeof input.items === 'object' ? input.items : {};
+    const items = {}, changed = {};
+    for (const it of rb.items) {
+      const g = given[it.id];
+      const n = g === undefined || g === null || g === '' ? base.items[it.id] : Number(g);
+      if (!Number.isInteger(n) || n < 0 || n > it.max) fail(`「${it.title}」的分數要是 0～${it.max} 的整數`);
+      if (n !== base.items[it.id]) changed[it.id] = { from: base.items[it.id] ?? null, to: n };
+      items[it.id] = n;
+    }
+    const strengths = str(input.strengths ?? base.strengths ?? '', 2000).trim();
+    const improvements = str(input.improvements ?? base.improvements ?? '', 2000).trim();
+    const min = c.min_comment_chars || 0;
+    if ([...strengths].length < min) fail(`「作品優點」至少要 ${min} 個字`);
+    if ([...improvements].length < min) fail(`「改進建議」至少要 ${min} 個字`);
+    const commentsEdited = strengths !== (base.strengths || '') || improvements !== (base.improvements || '');
+    if (!Object.keys(changed).length && !commentsEdited) return runView(r);
+    const prev = r.manual && r.manual.items ? r.manual.items : {};
+    const merged = Object.assign({}, prev);
+    Object.entries(changed).forEach(([k, v]) => { merged[k] = { from: prev[k] ? prev[k].from : v.from, to: v.to }; });
+    await db.updateAiRun(r.id, { result: Object.assign({}, base, { items, strengths, improvements }),
+      manual: { items: merged, reason: '送出前修改暫存', by: acc.id, at: iso(now()), commentsEdited: commentsEdited || !!(r.manual && r.manual.commentsEdited) },
+      updated_at: iso(now()) });
+    const t = await db.getTeam(r.team_id);
+    await log(acc, 'ai_edit_draft', t.code, { run: r.id, changed, commentsEdited });
+    return runView(await db.getAiRun(r.id));
+  }
+
   /** 需要處理的 AI 評分：主辦人員補上（或修改）分數與評語並寫理由後送出 */
   async function adminAiFinalize(token, runId, input) {
     const acc = await auth(token, 'admin');
@@ -1350,7 +1390,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     judgeListWorks, judgeGetWork, judgeSaveDraft, judgeSubmit,
     adminListScores, adminGetScore, adminReturnScore,
     adminRanking, adminDecideTie, adminExportCsv, adminPublish, adminRevoke,
-    adminAiOverview, adminAiGetRun, adminAiStart, adminAiStep, adminAiFinalize, adminAiAdopt, adminAiLocalBegin, adminAiLocalFinish,
+    adminAiOverview, adminAiGetRun, adminAiStart, adminAiStep, adminAiFinalize, adminAiAdopt, adminAiEditDraft, adminAiLocalBegin, adminAiLocalFinish,
     publicStatus, publicResults,
   };
 

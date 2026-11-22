@@ -1187,11 +1187,24 @@ const aiReply = (scores, extra) => Object.assign({
     const nr = await call('adminAiLocalFinish', admin, bad.runId, { text: JSON.stringify(aiReply([30, null, 18, 8])), draft: true });
     assert.equal(nr.status, 'needs_review');
     await expectErr(/只有「暫存」/, 'adminAiAdopt', admin, nr.id);
+    const ik = Object.keys(items(0, 0, 0, 0));
+    await expectErr(/不能使用此功能/, 'adminAiEditDraft', judges.j1, r.id, {});
+    await expectErr(/0～40 的整數/, 'adminAiEditDraft', admin, r.id, { items: { [ik[0]]: 41 } });
+    await expectErr(/只有「暫存」/, 'adminAiEditDraft', admin, nr.id, {});
+    const ed = await call('adminAiEditDraft', admin, r.id, { items: { [ik[0]]: 30 }, strengths: '修改後的作品優點說明，夠長了。' });
+    assert.equal(ed.status, 'draft');
+    assert.equal(ed.result.items[ik[0]], 30);
+    assert.deepEqual(ed.manual.items[ik[0]], { from: 35, to: 30 });
+    assert.equal((await cellOf('team01')).draft.total, 81, '評分進度表顯示修改後的暫存分數');
+    assert.equal((await aiScore('team01')).total, 86, '修改暫存不影響已送出的 AI 評分');
     const done = await call('adminAiAdopt', admin, r.id);
+    assert.equal((await aiScore('team01')).total, 81, '送出的是修改後的分數');
     assert.equal(done.status, 'done');
     assert.equal((await cellOf('team01')).draft, null, '採用後不再顯示暫存');
-    assert.equal((await aiScore('team01')).total, 86);
     await expectErr(/只有「暫存」/, 'adminAiAdopt', admin, r.id);
+    const back = await call('adminAiLocalBegin', admin, team('team01'), true, '人工匯入');   // 還原成 86，後面的結算測試沿用
+    await call('adminAiLocalFinish', admin, back.runId, { text: JSON.stringify(aiReply([35, 22, 20, 9])) });
+    assert.equal((await aiScore('team01')).total, 86);
     const logs = (await call('adminLogs', admin)).map(x => x.action);
     assert.ok(logs.includes('ai_draft') && logs.includes('ai_adopt'));
   });
