@@ -987,7 +987,7 @@ const aiReply = (scores, extra) => Object.assign({
   await step('某一項判斷不了（null）→ 需要處理，不會送出', async () => {
     const r = await importAi(team('team02'), aiReply([30, null, 18, 8]));
     assert.equal(r.status, 'needs_review');
-    assert.ok(r.problems.some(x => /專題作品與課程相關」AI 無法判定/.test(x)));
+    assert.ok(r.problems.some(x => /主題與課程相關性」AI 無法判定/.test(x)));
     assert.equal((await aiScore('team02')).status, 'none');
   });
 

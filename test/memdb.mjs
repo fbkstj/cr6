@@ -300,7 +300,7 @@ export function createMemDb() {
       show_status_page: true, show_item_scores: false, min_comment_chars: 10 });
     t.rubrics.push({ id: rid, competition_id: cid, name: '預設評分表', category: 'project', version: 1, locked: false });
     t.rubrics.push({ id: rid2, competition_id: cid, name: '創意組評分表', category: 'creative', version: 1, locked: false });
-    [['專題作品的應用及整合性', 40], ['專題作品與課程相關', 25], ['創意性與實用性', 25], ['作品說明的組織與表達', 10]]
+    [['應用及整合性', 40], ['主題與課程相關性', 25], ['創意性', 25], ['內文組織及架構格式', 10]]
       .forEach(([title, max], k) => t.rubric_items.push({ id: crypto.randomUUID(), rubric_id: rid, sort: k + 1, title, max_score: max, description: '' }));
     [['獨創性', 40], ['實用性', 25], ['商品化程度', 25], ['內文組織及架構格式', 10]]
       .forEach(([title, max], k) => t.rubric_items.push({ id: crypto.randomUUID(), rubric_id: rid2, sort: k + 1, title, max_score: max, description: '' }));

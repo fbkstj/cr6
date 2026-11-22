@@ -46,10 +46,10 @@ begin
   insert into competitions (name, active, judge_count) values (p_name, true, p_judge_count) returning id into cid;
   insert into rubrics (competition_id, name) values (cid, '預設評分表') returning id into rid;
   insert into rubric_items (rubric_id, sort, title, max_score, description) values
-    (rid, 1, '專題作品的應用及整合性', 40, ''),
-    (rid, 2, '專題作品與課程相關', 25, ''),
-    (rid, 3, '創意性與實用性', 25, ''),
-    (rid, 4, '作品說明的組織與表達', 10, '試辦項目，名稱與判準待校方定案');
+    (rid, 1, '應用及整合性', 40, ''),
+    (rid, 2, '主題與課程相關性', 25, ''),
+    (rid, 3, '創意性', 25, ''),
+    (rid, 4, '內文組織及架構格式', 10, '依 115 年初賽評分表');
   insert into rubrics (competition_id, name, category) values (cid, '創意組評分表', 'creative') returning id into rid2;
   insert into rubric_items (rubric_id, sort, title, max_score, description) values
     (rid2, 1, '獨創性', 40, '依 115 年初賽評分表'),
