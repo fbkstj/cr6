@@ -128,7 +128,7 @@ export function createMemDb() {
     /** 同 SQL lock_for_judging：先全部檢查，全部通過才一次寫入 */
     lockForJudging: async (cid, actor) => {
       const c = t.competitions.find(x => x.id === cid);
-      if (c.phase !== 'collecting') raise('只有「收件審查」階段可以開始評分');
+      if (c.phase !== 'collecting') raise('只有「收件」階段可以開始評分');
       const n = t.judge_slots.filter(s => s.competition_id === cid && s.slot_no <= c.judge_count
         && t.accounts.some(a => a.id === s.account_id && a.active && a.role === 'judge')).length;
       if (n < c.judge_count) raise(`評審席位還沒排滿（${n} / ${c.judge_count}）`);
@@ -136,10 +136,8 @@ export function createMemDb() {
       if (t.rubric_items.filter(i => i.rubric_id === c.rubric_id_creative).reduce((s, i) => s + i.max_score, 0) !== 100) raise('創意組評分表總分必須是 100');
       const ids = teamIdsOf(cid);
       const cur = t.team_current.filter(x => ids.has(x.team_id));
-      const pend = cur.filter(x => latestStatus(x.version_id) === 'pending').length;
-      if (pend) raise(`還有 ${pend} 組的資格審查未完成`);
-      const pass = cur.filter(x => latestStatus(x.version_id) === 'pass');
-      if (!pass.length) raise('沒有任何資格通過的作品');
+      const pass = cur;   // 沒有資格審查：有設定正式版本的作品都進入評分
+      if (!pass.length) raise('沒有任何可以評分的作品（還沒有設定正式版本）');
       t.judging_locks = t.judging_locks.filter(x => !ids.has(x.team_id))
         .concat(pass.map(x => ({ team_id: x.team_id, version_id: x.version_id, locked_at: nowIso(), locked_by: actor })));
       const lockedIds = new Set(pass.map(x => x.team_id));

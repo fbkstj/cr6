@@ -60,9 +60,8 @@ export async function buildSim(api, log = console.log) {
   for (const t of board.teams) {
     const v = t.versions[0];
     await call('adminSetCurrentVersion', admin, t.id, v.id);
-    await call('adminReview', admin, v.id, 'pass', '');
   }
-  log('· 同步 8 支影片、資格審查全部通過');
+  log('· 同步 8 支影片、設定正式版本');
   await call('adminSetPhase', admin, 'judging');
   board = await call('adminGetBoard', admin);
   const teamId = code => board.teams.find(t => t.code === code).id;

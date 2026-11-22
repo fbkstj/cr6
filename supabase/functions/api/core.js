@@ -264,8 +264,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
   /* ───────────── 主辦方：競賽、評分表、評審席位（P3） ───────────── */
 
   const PHASES = ['setup', 'collecting', 'judging', 'settling', 'published'];
-  const PHASE_LABEL = { setup: '準備', collecting: '收件審查', judging: '評分', settling: '結算', published: '已公布' };
-  const REVIEW_STATUS = ['pending', 'pass', 'resubmit', 'fail'];
+  const PHASE_LABEL = { setup: '準備', collecting: '收件', judging: '評分', settling: '結算', published: '已公布' };
   const beforeJudging = c => c.phase === 'setup' || c.phase === 'collecting';
   const needBeforeJudging = (c, what) => { if (!beforeJudging(c)) fail(`已經開始評分，不能再${what}`); };
 
@@ -478,54 +477,24 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     return { ok: true };
   }
 
-  async function adminReview(token, versionId, status, reason, timecodes) {
-    const acc = await auth(token, 'admin');
-    const c = await compOf(acc);
-    needBeforeJudging(c, '修改資格審查');
-    const v = await versionOf(c, versionId);
-    if (!REVIEW_STATUS.includes(status)) fail('審查結果不正確');
-    if (status === 'pass' && !v.check_ok) fail('檢查沒有通過的版本不能審查通過');
-    reason = String(reason || '').trim();
-    if ((status === 'resubmit' || status === 'fail') && !reason) fail('退回補件或不通過必須填寫原因');
-    if (reason.length > 1000) fail('原因最多 1000 字');
-    const tc = Array.isArray(timecodes) ? timecodes : [];
-    if (tc.length > 50) fail('時間點最多 50 個');
-    const dur = Number(v.duration_sec) || 0;
-    const cleanTc = tc.map(x => {
-      const sec = Math.round(Number(x && x.sec) * 10) / 10;
-      if (!Number.isFinite(sec) || sec < 0 || (dur && sec > dur + 0.5)) fail('時間點要在影片長度內');
-      return { sec, note: String((x && x.note) || '').trim().slice(0, 200) };
-    }).sort((a, b) => a.sec - b.sec);
-    const team = await db.getTeam(v.team_id);
-    await db.insertReview({ version_id: v.id, status, reason, timecodes: cleanTc, reviewer: acc.id, reviewed_at: iso(now()) });
-    await log(acc, 'review', `${team.code}_v${v.version_no}`, { status, reason });
-    return { ok: true };
-  }
-
   /** 狀態文字（後台與公開頁共用；公開頁不帶原因） */
-  function teamStatus(c, versions, currentId, latestOf, lockedVersionId) {
+  function teamStatus(c, versions, currentId, lockedVersionId) {
     if (lockedVersionId) return { key: 'locked', label: c.phase === 'published' ? '已公布' : '評分中' };
     if (!versions.length) return { key: 'none', label: '未收件' };
     if (!currentId) return { key: 'received', label: '已收件' };
-    const st = latestOf(currentId);
-    if (c.phase !== 'setup' && c.phase !== 'collecting') return { key: 'excluded', label: st === 'fail' ? '未通過' : '未進入評分' };
-    return { pending: { key: 'reviewing', label: '審查中' }, pass: { key: 'pass', label: '資格通過' },
-      resubmit: { key: 'resubmit', label: '補件中' }, fail: { key: 'fail', label: '未通過' } }[st];
+    if (c.phase !== 'setup' && c.phase !== 'collecting') return { key: 'excluded', label: '未進入評分' };
+    return { key: 'pass', label: '可評分' };   // 沒有資格審查：已設定正式版本就能進入評分
   }
 
   async function loadBoard(c) {
     const [teams, versions, current, locks] = await Promise.all([
       db.listTeams(c.id), db.listVersions(c.id), db.listTeamCurrent(c.id), db.listLocks(c.id),
     ]);
-    const reviews = await db.listReviews(versions.map(v => v.id));
-    const revBy = {};
-    reviews.sort((a, b) => b.id - a.id).forEach(r => { (revBy[r.version_id] = revBy[r.version_id] || []).push(r); });
-    const latestOf = vid => (revBy[vid] && revBy[vid][0] ? revBy[vid][0].status : 'pending');
     const curBy = {}, lockBy = {};
     current.forEach(x => { curBy[x.team_id] = x.version_id; });
     locks.forEach(x => { lockBy[x.team_id] = x.version_id; });
     teams.sort((a, b) => a.code.localeCompare(b.code));
-    return { teams, versions, revBy, latestOf, curBy, lockBy };
+    return { teams, versions, curBy, lockBy };
   }
 
   async function adminGetBoard(token) {
@@ -542,14 +511,12 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
         id: t.id, code: t.code, name: t.name, members: t.members, workTitle: t.work_title, workDesc: t.work_desc,
         category: catOf(t), categoryLabel: CATEGORY_LABEL[catOf(t)],
         currentVersionId: b.curBy[t.id] || null, lockedVersionId: b.lockBy[t.id] || null,
-        status: teamStatus(c, vs, b.curBy[t.id], b.latestOf, b.lockBy[t.id]),
+        status: teamStatus(c, vs, b.curBy[t.id], b.lockBy[t.id]),
         versions: vs.map(v => ({
           id: v.id, no: v.version_no, filename: v.source_filename, sha256: v.source_sha256, size: v.source_size,
           duration: v.duration_sec === null ? null : Number(v.duration_sec), container: v.container, vcodec: v.vcodec, acodec: v.acodec,
           width: v.width, height: v.height, checkOk: v.check_ok, checkNotes: v.check_notes, playbackPath: v.playback_path,
           playbackSize: v.playback_size, receivedAt: v.received_at, processedAt: v.processed_at,
-          reviewStatus: b.latestOf(v.id),
-          reviews: (b.revBy[v.id] || []).map(r => ({ status: r.status, reason: r.reason, timecodes: r.timecodes || [], reviewer: names[r.reviewer] || '', at: r.reviewed_at })),
         })),
       };
     });
@@ -569,24 +536,19 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
       const rb = await rubricView(c, cat);
       if (rb.total !== 100) problems.push(`${CATEGORY_LABEL[cat]}評分表總分必須是 100`);
     }
-    const willLock = [], excluded = [], pending = [];
+    const willLock = [], excluded = [];
     b.teams.forEach(t => {
-      const cur = b.curBy[t.id];
-      if (!cur) { excluded.push({ code: t.code, reason: b.versions.some(v => v.team_id === t.id) ? '沒有設定正式版本' : '未收件' }); return; }
-      const st = b.latestOf(cur);
-      if (st === 'pending') pending.push(t.code);
-      else if (st === 'pass') willLock.push(t.code);
-      else excluded.push({ code: t.code, reason: st === 'fail' ? '資格未通過' : '退回補件中' });
+      if (b.curBy[t.id]) willLock.push(t.code);
+      else excluded.push({ code: t.code, reason: b.versions.some(v => v.team_id === t.id) ? '沒有設定正式版本' : '未收件' });
     });
-    if (pending.length) problems.push(`還有 ${pending.length} 組的資格審查未完成：${pending.join('、')}`);
-    if (!pending.length && !willLock.length) problems.push('沒有任何資格通過的作品');
+    if (!willLock.length) problems.push('沒有任何可以評分的作品（還沒有設定正式版本）');
     return { problems, willLock, excluded };
   }
 
   async function adminJudgingPreview(token) {
     const acc = await auth(token, 'admin');
     const c = await compOf(acc);
-    if (c.phase !== 'collecting') fail('只有「收件審查」階段可以開始評分');
+    if (c.phase !== 'collecting') fail('只有「收件」階段可以開始評分');
     return judgingCheck(c);
   }
 
@@ -1297,7 +1259,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
       competition: { name: c.name, phaseLabel: PHASE_LABEL[c.phase] },
       teams: b.teams.map(t => {
         const vs = b.versions.filter(v => v.team_id === t.id);
-        const s = teamStatus(c, vs, b.curBy[t.id], b.latestOf, b.lockBy[t.id]);
+        const s = teamStatus(c, vs, b.curBy[t.id], b.lockBy[t.id]);
         return { code: t.code, name: t.name, workTitle: t.work_title, category: catOf(t), categoryLabel: CATEGORY_LABEL[catOf(t)], status: s.label };
       }),
     };
@@ -1350,7 +1312,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     adminListAccounts, adminUpsertAccount, adminResetPassword, adminLogs,
     adminSyncVideos,
     adminGetBoard, adminUpdateCompetition, adminSetAiCounted, adminGetRubric, adminSaveRubric, adminAssignSlot,
-    adminUpsertTeam, adminDeleteTeam, adminSetReceivedAt, adminSetCurrentVersion, adminReview,
+    adminUpsertTeam, adminDeleteTeam, adminSetReceivedAt, adminSetCurrentVersion,
     adminJudgingPreview, adminSetPhase,
     judgeListWorks, judgeGetWork, judgeSaveDraft, judgeSubmit,
     adminListScores, adminGetScore, adminReturnScore,

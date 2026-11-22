@@ -1,20 +1,19 @@
-// 主辦方後台（P3：總覽、作品與審查、評審與帳號、評分表、競賽設定、操作紀錄）
+// 主辦方後台（P3：總覽、作品與影片、評審與帳號、評分表、競賽設定、操作紀錄）
 import { call, requireRole, logout, esc, fmtTime, fmtDur, fmtSec, fmtSize, toLocalInput, fromLocalInput,
   toast, dialog, dialogValues, confirmBox, busy, devBanner } from './app.js';
 import { fromRanking, mountSheetPanel } from './sheet.js';
 
 const $ = s => document.querySelector(s);
 const main = $('#main');
-const S = { me: null, board: null, accounts: [], tab: 'overview', teamId: null, versionId: null, draftTc: [] };
+const S = { me: null, board: null, accounts: [], tab: 'overview', teamId: null, versionId: null };
 
-const PHASES = [['setup', '準備'], ['collecting', '收件審查'], ['judging', '評分'], ['settling', '結算'], ['published', '已公布']];
-const STATUS_CHIP = { none: '', received: 'info', reviewing: 'warn', pass: 'ok', resubmit: 'warn', fail: 'bad', locked: 'accent', excluded: 'bad' };
-const REVIEW = { pending: ['審查中', 'warn'], pass: ['通過', 'ok'], resubmit: ['退回補件', 'warn'], fail: ['不通過', 'bad'] };
+const PHASES = [['setup', '準備'], ['collecting', '收件'], ['judging', '評分'], ['settling', '結算'], ['published', '已公布']];
+const STATUS_CHIP = { none: '', received: 'info', pass: 'ok', locked: 'accent', excluded: 'bad' };
 const ACTION = {
   create_competition: '建立競賽', create_account: '新增帳號', update_account: '修改帳號', reset_password: '重設密碼',
   sync_videos: '同步影片清單', update_competition: '修改競賽設定', save_rubric: '修改評分表', assign_judge: '指派評審',
   replace_judge: '替補評審', clear_slot: '清空席位', create_team: '新增組別', update_team: '修改組別', delete_team: '刪除組別',
-  set_received_at: '填寫收件時間', set_current_version: '設定正式版本', review: '資格審查', set_phase: '切換階段', lock_for_judging: '鎖定版本、開始評分',
+  set_received_at: '填寫收件時間', set_current_version: '設定正式版本', set_phase: '切換階段', lock_for_judging: '鎖定版本、開始評分',
   judge_submit: '評審送出評分', return_score: '退回評分', decide_tie: '同分處理', export_csv: '匯出 CSV', publish: '公布結果', revoke: '撤回公布',
   ai_start: '開始 AI 評分', ai_score: 'AI 評分送出', ai_needs_review: 'AI 評分需要處理', ai_finalize: 'AI 評分補分', ai_draft: 'AI 評分暫存', ai_adopt: '送出 AI 評分', ai_edit_draft: '修改暫存的 AI 評分',
 };
@@ -57,7 +56,7 @@ function viewOverview() {
   const idx = PHASES.findIndex(p => p[0] === c.phase);
   const count = k => teams.filter(t => t.status.key === k).length;
   const actions = {
-    setup: `<button class="btn primary" data-act="phase" data-to="collecting">開始收件審查</button>`,
+    setup: `<button class="btn primary" data-act="phase" data-to="collecting">開始收件</button>`,
     collecting: `<button class="btn" data-act="phase" data-to="setup">回到準備</button>
                  <button class="btn primary" data-act="preview-judging">開始評分（鎖定版本）…</button>`,
     judging: `<span class="muted">評分進行中。所有作品收齊評分後，就可以進入結算。</span>
@@ -81,10 +80,8 @@ function viewOverview() {
       <div class="stat"><span class="muted small">組數</span><b>${teams.length}</b></div>
       <div class="stat"><span class="muted small">已收件</span><b>${teams.filter(t => t.versions.length).length}</b></div>
       <div class="stat"><span class="muted small">待設正式版本</span><b>${count('received')}</b></div>
-      <div class="stat"><span class="muted small">審查中</span><b>${count('reviewing')}</b></div>
-      <div class="stat"><span class="muted small">資格通過</span><b>${count('pass') + count('locked')}</b></div>
-      <div class="stat"><span class="muted small">補件中</span><b>${count('resubmit')}</b></div>
-      <div class="stat"><span class="muted small">未通過</span><b>${count('fail') + count('excluded')}</b></div>
+      <div class="stat"><span class="muted small">可評分</span><b>${count('pass') + count('locked')}</b></div>
+      <div class="stat"><span class="muted small">未進入評分</span><b>${count('excluded')}</b></div>
     </div>
     <div class="table-wrap"><table>
       <thead><tr><th>組別</th><th>作品</th><th>版本數</th><th>狀態</th></tr></thead>
@@ -108,14 +105,14 @@ async function previewJudging(btn) {
     <div><b>會進入評分（${p.willLock.length} 組）：</b> ${p.willLock.map(esc).join('、') || '無'}</div>
     <div><b>不進入評分（${p.excluded.length} 組）：</b> ${p.excluded.map(e => `${esc(e.code)}（${esc(e.reason)}）`).join('、') || '無'}</div>
     <div><b>評審：</b>老師 ${S.board.competition.judgeCount} 人${S.board.competition.aiJudge ? `＋AI 評審（評審${S.board.competition.aiSlot}），每件作品收齊 ${S.board.competition.seats} 份` : '（沒有 AI 評審）'}</div>
-    ${p.problems.length ? '' : '<div class="notice warn">開始評分後，<b>不能再更換正式版本、修改資格審查、評分表、評審人數與 AI 評審設定</b>。</div>'}`;
+    ${p.problems.length ? '' : '<div class="notice warn">開始評分後，<b>不能再更換正式版本、評分表、評審人數與 AI 評審設定</b>。</div>'}`;
   if (p.problems.length) { await dialog(html, [{ label: '知道了', value: false, primary: true }]); return; }
   if (!(await confirmBox(html, '確定開始評分'))) return;
   const r = await busy(null, () => call('adminSetPhase', 'judging'));
   if (r) { toast(`已開始評分：鎖定 ${r.locked} 組作品`); await refresh(); }
 }
 
-/* ───────────── 作品與審查 ───────────── */
+/* ───────────── 作品與影片 ───────────── */
 function viewWorks() {
   const teams = S.board.teams;
   if (!S.teamId && teams.length) S.teamId = teams[0].id;
@@ -157,12 +154,11 @@ function teamDetail(t) {
   <div class="card stack">
     <h2>影片版本</h2>
     ${t.versions.length ? `<div class="table-wrap"><table>
-      <thead><tr><th>版本</th><th>長度</th><th>檔案檢查</th><th>資格審查</th><th>收件時間</th><th></th></tr></thead>
+      <thead><tr><th>版本</th><th>長度</th><th>檔案檢查</th><th>收件時間</th><th></th></tr></thead>
       <tbody>${t.versions.map(x => `<tr ${x.id === S.versionId ? 'style="background:var(--accent-soft)"' : ''}>
         <td><b>v${x.no}</b> ${x.id === t.lockedVersionId ? chip('評分版本', 'accent') : x.id === t.currentVersionId ? chip('正式版本', 'info') : ''}<br><span class="muted small">${esc(x.filename)}</span></td>
         <td>${fmtDur(x.duration)}</td>
         <td>${x.checkOk ? chip('合格', 'ok') : chip('不合格', 'bad') + `<br><span class="small">${esc(x.checkNotes)}</span>`}</td>
-        <td>${chip(...REVIEW[x.reviewStatus])}</td>
         <td class="small">${fmtTime(x.receivedAt)}</td>
         <td><div class="row">
           <button class="btn small" data-act="open-version" data-id="${x.id}">檢視</button>
@@ -175,10 +171,9 @@ function teamDetail(t) {
 
 function versionDetail(t, v) {
   const locked = !beforeJudging();
-  const tc = S.draftTc;
   return `
   <div class="card stack">
-    <h2>v${v.no} 檢視與資格審查</h2>
+    <h2>v${v.no} 檢視</h2>
     ${v.playbackPath ? `<video id="player" controls preload="metadata" src="${esc(v.playbackPath)}"></video>`
       : '<div class="notice bad">這個版本檔案檢查不合格，沒有播放版。請在自己電腦上開原檔確認。</div>'}
     <div class="small muted">
@@ -191,35 +186,6 @@ function versionDetail(t, v) {
       <button class="btn small" type="submit">儲存</button>
       <span class="muted small">（台灣時間）</span>
     </form>
-    ${locked ? '<div class="notice">已經開始評分，資格審查不能再修改。</div>' : `
-    <form data-form="review" class="stack">
-      <div><label>審查結果</label>
-        <div class="row">
-          ${[['pass', '通過'], ['resubmit', '退回補件'], ['fail', '不通過']].map(([k, l]) =>
-            `<label class="check"><input type="radio" name="status" value="${k}" ${!v.checkOk && k === 'pass' ? 'disabled' : ''}> ${l}</label>`).join('')}
-        </div>
-      </div>
-      <div><label for="reason">原因（退回補件、不通過必填，例如剪接、後製、不是一鏡到底）</label><textarea id="reason" name="reason" maxlength="1000"></textarea></div>
-      <div class="stack">
-        <div class="row"><b>影片時間點</b>
-          ${v.playbackPath ? '<button class="btn small" type="button" data-act="add-tc">＋ 加入目前播放時間</button>' : ''}
-        </div>
-        ${tc.length ? `<ul class="list">${tc.map((x, i) => `<li class="row" style="padding:6px 0">
-          <a href="#" data-act="seek" data-sec="${x.sec}" class="mono">${fmtSec(x.sec)}</a>
-          <input type="text" data-tc="${i}" value="${esc(x.note)}" placeholder="說明（例如：畫面跳接）" maxlength="200" style="flex:1;min-width:160px">
-          <button class="btn small" type="button" data-act="del-tc" data-i="${i}">刪除</button></li>`).join('')}</ul>`
-          : '<span class="muted small">播放到有問題的地方，按「加入目前播放時間」。</span>'}
-      </div>
-      <div><button class="btn primary" type="submit">送出審查</button></div>
-    </form>`}
-    <div>
-      <h3>審查紀錄</h3>
-      ${v.reviews.length ? `<ul class="list">${v.reviews.map(r => `<li style="padding:8px 0;border-bottom:1px solid var(--line)">
-        ${chip(...REVIEW[r.status])} <span class="muted small">${fmtTime(r.at)}・${esc(r.reviewer)}</span>
-        ${r.reason ? `<div>${esc(r.reason)}</div>` : ''}
-        ${r.timecodes.length ? `<div class="small">${r.timecodes.map(x => `<a href="#" data-act="seek" data-sec="${x.sec}" class="mono">${fmtSec(x.sec)}</a> ${esc(x.note)}`).join('　')}</div>` : ''}
-      </li>`).join('')}</ul>` : '<p class="muted small">還沒有審查紀錄</p>'}
-    </div>
   </div>`;
 }
 
@@ -242,7 +208,7 @@ function viewScores() {
   main.innerHTML = '<div class="card"><p class="muted">載入中…</p></div>';
   call('adminListScores').then(r => {
     if (!r.rows.length) {
-      main.innerHTML = `<div class="card notice">${['setup', 'collecting'].includes(r.phase) ? '還沒有開始評分。資格審查完成後，到「總覽」按「開始評分」。' : '沒有進入評分的作品。'}</div>`;
+      main.innerHTML = `<div class="card notice">${['setup', 'collecting'].includes(r.phase) ? '還沒有開始評分。影片收齊、設好正式版本後，到「總覽」按「開始評分」。' : '沒有進入評分的作品。'}</div>`;
       return;
     }
     const pct = Math.round(r.completeWorks / r.totalWorks * 100);
@@ -736,7 +702,7 @@ function viewSettings() {
       <div class="field"><label class="check"><input type="checkbox" name="aiJudge" ${c.aiJudge ? 'checked' : ''} ${ro ? 'disabled' : ''}> 加入 AI 評審（多一席，分數匯入保存）</label>
         <span class="muted small">AI 坐在最後一席（${c.judgeCount} 位老師時是評審${c.judgeCount + 1}），用外部 AI 評完後，由主辦人員在「AI 評分」分頁匯入評分檔。要不要把 AI 分數計入平均，到「結算與公布」頁勾選（預設計入）。${ro ? '已經開始評分，不能修改。' : ''}</span></div>
       <div class="field"><label>評語最少字數（優點、改進建議各自）</label><input type="number" name="minCommentChars" value="${c.minCommentChars}" min="0" max="200" ${ro ? 'disabled' : ''} style="width:120px"></div>
-      <label class="check"><input type="checkbox" name="showStatusPage" ${c.showStatusPage ? 'checked' : ''}> 公布前，公開頁顯示各組收件與資格狀態（不顯示原因）</label>
+      <label class="check"><input type="checkbox" name="showStatusPage" ${c.showStatusPage ? 'checked' : ''}> 公布前，公開頁顯示各組收件狀態</label>
       <label class="check"><input type="checkbox" name="showItemScores" ${c.showItemScores ? 'checked' : ''}> 公布結果時顯示每位評審的分項分數</label>
       <div><button class="btn primary" type="submit">儲存設定</button></div>
     </form>
@@ -822,7 +788,7 @@ main.addEventListener('click', async e => {
     }
     case 'phase': {
       const to = el.dataset.to;
-      const label = { collecting: '開始收件審查', setup: '回到準備階段', settling: '進入結算', judging: '回到評分階段（可以再退回評分給評審修改）' }[to];
+      const label = { collecting: '開始收件', setup: '回到準備階段', settling: '進入結算', judging: '回到評分階段（可以再退回評分給評審修改）' }[to];
       if (!(await confirmBox(`<p>確定要${label}？</p>`))) return;
       if (await busy(el, () => call('adminSetPhase', to))) { toast('已切換階段'); await refresh(); }
       break;
@@ -837,8 +803,8 @@ main.addEventListener('click', async e => {
     case 'ai-fix': await aiFix(id); break;
     case 'goto': setTab(el.dataset.tab); break;
     case 'score': await openScore(id); break;
-    case 'open-team': S.teamId = id; S.versionId = null; S.draftTc = []; if (S.tab !== 'works') setTab('works'); else render(); break;
-    case 'open-version': S.versionId = id; S.draftTc = []; render(); break;
+    case 'open-team': S.teamId = id; S.versionId = null; if (S.tab !== 'works') setTab('works'); else render(); break;
+    case 'open-version': S.versionId = id; render(); break;
     case 'new-team': await newTeam(); break;
     case 'del-team':
       if (!(await confirmBox('<p>確定刪除這個組別？</p>', '刪除', true))) return;
@@ -857,14 +823,9 @@ main.addEventListener('click', async e => {
     }
     case 'set-current': {
       const t = S.board.teams.find(x => x.id === S.teamId);
-      if (await busy(el, () => call('adminSetCurrentVersion', t.id, id))) { S.versionId = id; toast('已設為正式版本，請進行資格審查'); await refresh(); }
+      if (await busy(el, () => call('adminSetCurrentVersion', t.id, id))) { S.versionId = id; toast('已設為正式版本（開始評分時會鎖定這個版本）'); await refresh(); }
       break;
     }
-    case 'add-tc':
-      if (player) { S.draftTc.push({ sec: Math.round(player.currentTime * 10) / 10, note: '' }); S.draftTc.sort((a, b) => a.sec - b.sec); keepForm(() => render()); }
-      break;
-    case 'del-tc': S.draftTc.splice(Number(el.dataset.i), 1); keepForm(() => render()); break;
-    case 'seek': if (player) { player.currentTime = Number(el.dataset.sec); player.play().catch(() => {}); } break;
     case 'assign': {
       const slot = Number(el.dataset.slot);
       const sel = main.querySelector(`select[data-slot="${slot}"]`);
@@ -912,25 +873,8 @@ main.addEventListener('click', async e => {
   }
 });
 
-/** 重畫畫面時保留審查表單已經填的內容 */
-function keepForm(fn) {
-  const f = main.querySelector('form[data-form="review"]');
-  const saved = f ? { status: (f.querySelector('input[name=status]:checked') || {}).value, reason: f.reason.value } : null;
-  const player = document.getElementById('player');
-  const t = player ? player.currentTime : 0;
-  fn();
-  const f2 = main.querySelector('form[data-form="review"]');
-  if (f2 && saved) {
-    if (saved.status) f2.querySelector(`input[name=status][value="${saved.status}"]`).checked = true;
-    f2.reason.value = saved.reason;
-  }
-  const p2 = document.getElementById('player');
-  if (p2 && t) p2.addEventListener('loadedmetadata', () => { p2.currentTime = t; }, { once: true });
-}
-
 main.addEventListener('input', e => {
   const el = e.target;
-  if (el.dataset.tc !== undefined) S.draftTc[Number(el.dataset.tc)].note = el.value;
   if (el.dataset.rb !== undefined) {
     rubricDraft[Number(el.dataset.rb)][el.dataset.k] = el.value;
     if (el.dataset.k === 'max') {   // 只更新合計與儲存按鈕，不重畫（避免輸入框失去焦點）
@@ -949,10 +893,6 @@ main.addEventListener('submit', async e => {
     if (await busy(btn, () => call('adminUpsertTeam', { id: t.id, name: f.name.value, members: f.members.value, workTitle: f.workTitle.value, workDesc: f.workDesc.value, category: f.category.value }))) { toast('已儲存組別資料'); await refresh(); }
   } else if (kind === 'received') {
     if (await busy(btn, () => call('adminSetReceivedAt', S.versionId, fromLocalInput(f.at.value)))) { toast('已儲存收件時間'); await refresh(); }
-  } else if (kind === 'review') {
-    const st = f.querySelector('input[name=status]:checked');
-    if (!st) { toast('請選擇審查結果', 'bad'); return; }
-    if (await busy(btn, () => call('adminReview', S.versionId, st.value, f.reason.value, S.draftTc))) { S.draftTc = []; toast('已送出審查'); await refresh(); }
   } else if (kind === 'new-account') {
     const r = await busy(btn, () => call('adminUpsertAccount', { loginId: f.loginId.value, name: f.name.value, role: f.role.value }));
     if (r) { await refresh(); await showTempPassword(r.account.loginId, r.tempPassword, '已新增帳號'); }

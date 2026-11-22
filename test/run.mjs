@@ -311,8 +311,8 @@ console.log('P2 影片清單同步');
   });
 }
 
-/* ═════════════ P3 主辦方後台：作品、審查、補件、鎖版 ═════════════ */
-console.log('P3 作品與資格審查');
+/* ═════════════ P3 主辦方後台：作品、影片版本、鎖版（沒有資格審查，審查在系統外人工先做） ═════════════ */
+console.log('P3 作品與影片版本');
 {
   const sha = c => c.repeat(64);
   const entry = (team, version, c, okFlag = true) => ({
@@ -327,7 +327,7 @@ console.log('P3 作品與資格審查');
   const teamBy = async code => (await board()).teams.find(t => t.code === code);
 
   await step('評審不能使用任何後台功能', async () => {
-    for (const fn of ['adminGetBoard', 'adminUpsertTeam', 'adminReview', 'adminSetPhase', 'adminSaveRubric', 'adminAssignSlot', 'adminSetCurrentVersion']) {
+    for (const fn of ['adminGetBoard', 'adminUpsertTeam', 'adminSetPhase', 'adminSaveRubric', 'adminAssignSlot', 'adminSetCurrentVersion']) {
       await expectErr(/不能使用此功能/, fn, judge, {});
     }
   });
@@ -369,7 +369,7 @@ console.log('P3 作品與資格審查');
     await expectErr(/不屬於這一組/, 'adminSetCurrentVersion', admin, t2.id, t1.versions[0].id);
     await call('adminSetCurrentVersion', admin, t2.id, t2.versions[0].id);
     await call('adminSetCurrentVersion', admin, t1.id, t1.versions[0].id);
-    assert.equal((await teamBy('team02')).status.label, '審查中');
+    assert.equal((await teamBy('team02')).status.label, '可評分', '沒有資格審查：設定正式版本就能進入評分');
   });
 
   await step('收件時間：可以填寫與清除，不能晚於現在', async () => {
@@ -381,36 +381,19 @@ console.log('P3 作品與資格審查');
     assert.equal((await teamBy('team01')).versions[0].receivedAt, null);
   });
 
-  await step('資格審查：退回與不通過必填原因、時間點要在片長內、檢查沒過不能通過', async () => {
-    const t2 = await teamBy('team02');
-    await expectErr(/必須填寫原因/, 'adminReview', admin, t2.versions[0].id, 'resubmit', '  ');
-    await expectErr(/必須填寫原因/, 'adminReview', admin, t2.versions[0].id, 'fail', '');
-    await expectErr(/不能審查通過/, 'adminReview', admin, t2.versions[1].id, 'pass');
-    await expectErr(/影片長度內/, 'adminReview', admin, t2.versions[0].id, 'resubmit', '中間有剪接', [{ sec: 999, note: 'x' }]);
-    await expectErr(/審查結果不正確/, 'adminReview', admin, t2.versions[0].id, 'ok');
-    await call('adminReview', admin, t2.versions[0].id, 'resubmit', '04:10 畫面中斷，疑似剪接', [{ sec: 250.04, note: '畫面跳接' }, { sec: 12, note: '開頭' }]);
+  await step('已取消資格審查：沒有審查功能，版本資料也不再帶審查欄位', async () => {
+    await expectErr(/不支援的操作/, 'adminReview', admin, (await teamBy('team02')).versions[0].id, 'pass');
     const v = (await teamBy('team02')).versions[0];
-    assert.equal(v.reviewStatus, 'resubmit');
-    assert.deepEqual(v.reviews[0].timecodes.map(x => x.sec), [12, 250], '時間點排序並取到 0.1 秒');
-    assert.equal(v.reviews[0].reviewer, '主辦人員');
-    assert.equal((await teamBy('team02')).status.label, '補件中');
+    assert.equal(v.reviewStatus, undefined);
+    assert.equal(v.reviews, undefined);
   });
 
-  await step('改判：新增一筆審查，舊紀錄保留，以最新一筆為準', async () => {
-    const v1 = (await teamBy('team01')).versions[0];
-    await call('adminReview', admin, v1.id, 'fail', '有後製字幕');
-    await call('adminReview', admin, v1.id, 'pass', '');
-    const v = (await teamBy('team01')).versions[0];
-    assert.equal(v.reviewStatus, 'pass');
-    assert.deepEqual(v.reviews.map(r => r.status), ['pass', 'fail']);
-  });
-
-  await step('公開狀態頁：只顯示狀態，不帶退回原因', async () => {
+  await step('公開狀態頁：只顯示組別、作品與狀態', async () => {
     const r = await call('publicStatus');
     assert.equal(r.enabled, true);
-    assert.deepEqual(r.teams.map(t => [t.code, t.status]), [['team01', '資格通過'], ['team02', '補件中'], ['team03', '已收件']]);
+    assert.deepEqual(r.teams.map(t => [t.code, t.status]), [['team01', '可評分'], ['team02', '可評分'], ['team03', '已收件']]);
     const text = JSON.stringify(r);
-    for (const leak of ['剪接', '後製字幕', '畫面跳接', 'sha', 'reason']) assert.ok(!text.includes(leak), '不應出現 ' + leak);
+    for (const leak of ['sha', 'reason', 'playback']) assert.ok(!text.includes(leak), '不應出現 ' + leak);
   });
 
   await step('主辦方可以關閉公開狀態頁', async () => {
@@ -459,39 +442,31 @@ console.log('P3 作品與資格審查');
     assert.deepEqual((await board()).slots.map(s => s.slot), [1, 2]);
   });
 
-  await step('階段：準備不能直接跳到評分；切到收件審查', async () => {
+  await step('階段：準備不能直接跳到評分；切到收件', async () => {
     await expectErr(/不能切換到「評分」/, 'adminSetPhase', admin, 'judging');
     await call('adminSetPhase', admin, 'collecting');
     assert.equal((await board()).competition.phase, 'collecting');
   });
 
-  await step('開始評分前的檢查：列出缺席位、未完成審查的組別', async () => {
+  await step('開始評分前的檢查：列出缺席位；有正式版本的進入評分、沒有的列為不進入', async () => {
     const p = await call('adminJudgingPreview', admin);
     assert.ok(p.problems.some(x => /席位還沒排滿（2 \/ 3）/.test(x)));
-    assert.ok(p.problems.some(x => /team03/.test(x)) === false, 'team03 沒有正式版本，不算未完成審查');
-    assert.deepEqual(p.willLock, ['team01']);
-    assert.deepEqual(p.excluded.map(e => e.code + ':' + e.reason), ['team02:退回補件中', 'team03:沒有設定正式版本']);
+    assert.deepEqual(p.willLock, ['team01', 'team02']);
+    assert.deepEqual(p.excluded.map(e => e.code + ':' + e.reason), ['team03:沒有設定正式版本']);
     await expectErr(/席位還沒排滿/, 'adminSetPhase', admin, 'judging');
   });
 
-  await step('補件：新版本獨立重審，舊版本與舊審查仍可查', async () => {
+  await step('補件：設定新版本為正式版本，舊版本仍可查', async () => {
     manifest.versions.push(entry('team02', 3, 'e'));
     await call('adminSyncVideos', admin);
     const t2 = await teamBy('team02');
     await call('adminSetCurrentVersion', admin, t2.id, t2.versions[0].id);
-    assert.equal((await teamBy('team02')).status.label, '審查中');
-    const p = await call('adminJudgingPreview', admin);
-    assert.ok(p.problems.some(x => /還有 1 組.*team02/.test(x)));
-    await call('adminReview', admin, t2.versions[0].id, 'pass');
     const after = await teamBy('team02');
-    assert.equal(after.versions.find(v => v.no === 2).reviewStatus, 'resubmit');
-    assert.equal(after.versions.find(v => v.no === 2).reviews[0].reason, '04:10 畫面中斷，疑似剪接');
+    assert.equal(after.status.label, '可評分');
+    assert.deepEqual(after.versions.map(v => v.no), [3, 2, 1]);
   });
 
-  await step('審查不通過的作品不進入評分；開始評分後鎖定版本', async () => {
-    const t3 = await teamBy('team03');
-    await call('adminSetCurrentVersion', admin, t3.id, t3.versions[0].id);
-    await call('adminReview', admin, t3.versions[0].id, 'fail', '不是一鏡到底');
+  await step('沒有設定正式版本的作品不進入評分；開始評分後鎖定版本', async () => {
     const accs = await call('adminListAccounts', admin);
     await call('adminAssignSlot', admin, 3, accs.find(a => a.loginId === 'judge03').id);
     const r = await call('adminSetPhase', admin, 'judging');
@@ -502,13 +477,12 @@ console.log('P3 作品與資格審查');
     assert.equal(b.rubric.locked, true);
     const t2 = b.teams.find(t => t.code === 'team02');
     assert.equal(t2.lockedVersionId, t2.versions.find(v => v.no === 3).id, '鎖定的是補件後的第 3 版');
-    assert.deepEqual(b.teams.map(t => t.status.label), ['評分中', '評分中', '未通過']);
+    assert.deepEqual(b.teams.map(t => t.status.label), ['評分中', '評分中', '已收件']);
   });
 
-  await step('開始評分後：不能換正式版本、改審查、改評分表、改評審人數', async () => {
+  await step('開始評分後：不能換正式版本、改評分表、改評審人數', async () => {
     const t1 = await teamBy('team01');
     await expectErr(/已經開始評分/, 'adminSetCurrentVersion', admin, t1.id, t1.versions[0].id);
-    await expectErr(/已經開始評分/, 'adminReview', admin, t1.versions[0].id, 'fail', 'x');
     await expectErr(/已經開始評分/, 'adminSaveRubric', admin, [{ title: 'A', max: 100 }]);
     await expectErr(/已經開始評分/, 'adminUpdateCompetition', admin, { judgeCount: 5 });
     await expectErr(/已經開始評分/, 'adminUpsertTeam', admin, { code: 'team09' });
@@ -524,9 +498,9 @@ console.log('P3 作品與資格審查');
     assert.equal(s2.replacedReason, '原評審請病假');
   });
 
-  await step('操作紀錄包含審查、正式版本、鎖版、替補', async () => {
+  await step('操作紀錄包含正式版本、鎖版、替補', async () => {
     const actions = (await call('adminLogs', admin)).map(l => l.action);
-    for (const a of ['review', 'set_current_version', 'lock_for_judging', 'replace_judge', 'save_rubric', 'set_phase']) assert.ok(actions.includes(a), a);
+    for (const a of ['set_current_version', 'lock_for_judging', 'replace_judge', 'save_rubric', 'set_phase']) assert.ok(actions.includes(a), a);
   });
 
   await step('其他競賽的組別、版本不能被操作', async () => {
@@ -537,7 +511,7 @@ console.log('P3 作品與資格審查');
 
 /* ═════════════ P4 評審評分 ═════════════ */
 
-/** 建立一個已經進入評分階段的競賽：team01、team02 通過，team03 不通過 */
+/** 建立一個已經進入評分階段的競賽：team01、team02 進入評分，team03 沒有設定正式版本（不進入評分） */
 async function judgingSetup(judgeCount, { teams = 3, fail = ['team03'], aiJudge = false, creative = [] } = {}) {
   const sha = c => c.repeat(64);
   const e = (team, c) => ({ team, version: 1, source_filename: team + '_v1.mov', source_sha256: sha(c), source_size: 1, duration_sec: 300,
@@ -547,8 +521,7 @@ async function judgingSetup(judgeCount, { teams = 3, fail = ['team03'], aiJudge 
   const admin = (await ctx.call('login', 'admin01', 'admin-pass-01')).token;
   await ctx.call('adminSyncVideos', admin);
   for (const t of (await ctx.call('adminGetBoard', admin)).teams) {
-    await ctx.call('adminSetCurrentVersion', admin, t.id, t.versions[0].id);
-    await ctx.call('adminReview', admin, t.versions[0].id, fail.includes(t.code) ? 'fail' : 'pass', fail.includes(t.code) ? '有剪接' : '');
+    if (!fail.includes(t.code)) await ctx.call('adminSetCurrentVersion', admin, t.id, t.versions[0].id);   // fail＝沒有設定正式版本，不進入評分
   }
   await ctx.call('adminSetPhase', admin, 'collecting');
   await ctx.call('adminSetPhase', admin, 'judging');

@@ -15,7 +15,7 @@ import { api, esc, fmtTime, devBanner } from './assets/app.js';
 import { fromPublic, mountSheetPanel, buildSheets } from './assets/sheet.js';
 devBanner();
 const main = document.getElementById('main');
-const CHIP = { '未收件': '', '已收件': 'info', '審查中': 'warn', '資格通過': 'ok', '補件中': 'warn', '未通過': 'bad', '未進入評分': 'bad', '評分中': 'accent', '已公布': 'ok' };
+const CHIP = { '未收件': '', '已收件': 'info', '可評分': 'ok', '未進入評分': 'bad', '評分中': 'accent', '已公布': 'ok' };
 try {
   const res = await api('publicResults');
   if (res.competition) document.getElementById('title').textContent = res.competition.name;
@@ -54,7 +54,7 @@ try {
     else {
       document.title = '收件狀態｜' + st.competition.name;
       main.innerHTML = `<div class="card stack">
-        <h1>收件與資格狀態</h1>
+        <h1>收件狀態</h1>
         <p class="muted small" style="margin:0">目前階段：${esc(st.competition.phaseLabel)}。比賽結果尚未公布；退回補件的原因由主辦單位另行通知各組。</p>
         <div class="table-wrap"><table><thead><tr><th>類別</th><th>組別</th><th>作品</th><th>狀態</th></tr></thead>
         <tbody>${st.teams.map(t => `<tr><td>${esc(t.categoryLabel || '')}</td><td>${esc(t.name || t.code)}</td><td>${esc(t.workTitle) || '—'}</td>

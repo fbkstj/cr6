@@ -1,6 +1,6 @@
 // P6 整體演練：node test/rehearsal.mjs
 // 用正式的影片處理腳本產生的影片＋core.js（記憶體資料庫），照實際比賽的順序跑完整流程：
-//   演練 A（5 位評審、4 組）：建立組別 → 收件與檔案檢查 → 資格審查（退回補件、不通過）→ 補件重審 → 鎖版開始評分
+//   演練 A（5 位評審、4 組）：建立組別 → 收件與檔案檢查 → 補件（新版本設為正式版本）→ 鎖版開始評分
 //     → 評審評分（暫存、送出）→ 主辦方退回與重送 → 結算 → 同分處理 → 匯出 CSV → 公布 → 撤回 → 重新公布
 //   演練 B（3 位評審、2 組）：最精簡的完整流程
 // 每個檢查點對應原規格第 7 節的驗收項目；結果寫到 test/out/rehearsal_report.json，匯出的 CSV 也存在 test/out/。
@@ -94,10 +94,10 @@ console.log('\n演練 A：5 位評審、4 組');
     return `${m.length} 支，不合格 1 支：${bad.join('')}`;
   });
 
-  await check('2 收件與轉檔', '1080p 原檔轉成 720p 播放版、時長一致', async () => {
+  await check('2 收件與轉檔', '1080p 原檔轉成播放版（保留 1080p）、時長一致', async () => {
     const v = readManifest().versions.find(x => x.team === 'team04');
     assert.equal(v.width, 1920);
-    assert.equal(v.playback_height, 720);
+    assert.equal(v.playback_height, 1080);   // 現行規則：保留原檔解析度（最高 1080p）
     assert.ok(Math.abs(v.duration_sec - 16) < 0.2);
     return `1920×1080 → ${v.playback_width}×${v.playback_height}`;
   });
@@ -121,32 +121,28 @@ console.log('\n演練 A：5 位評審、4 組');
   });
 
   await call('adminSetPhase', admin, 'collecting');
-  for (const [code, no] of [['team01', 1], ['team02', 2], ['team03', 1], ['team04', 1]]) await call('adminSetCurrentVersion', admin, await teamId(code), (await ver(code, no)).id);
+  for (const [code, no] of [['team01', 1], ['team02', 2]]) await call('adminSetCurrentVersion', admin, await teamId(code), (await ver(code, no)).id);
 
-  await check('3 資格審查與補件', '資格審查：通過、退回補件（附時間點）、不通過（附原因）', async () => {
-    await call('adminReview', admin, (await ver('team01', 1)).id, 'pass');
-    await call('adminReview', admin, (await ver('team02', 2)).id, 'pass');
-    await call('adminReview', admin, (await ver('team03', 1)).id, 'resubmit', '0:08 畫面跳接，疑似剪接，請一鏡到底重錄', [{ sec: 8.2, note: '畫面跳接' }]);
-    await call('adminReview', admin, (await ver('team04', 1)).id, 'fail', '影片加入後製字幕與轉場，不符一鏡到底');
+  await check('3 收件與補件', '沒有資格審查：設定正式版本的組別「可評分」，其他維持「已收件」', async () => {
     const st = (await board()).teams.map(t => `${t.code}:${t.status.label}`);
-    assert.deepEqual(st, ['team01:資格通過', 'team02:資格通過', 'team03:補件中', 'team04:未通過']);
+    assert.deepEqual(st, ['team01:可評分', 'team02:可評分', 'team03:已收件', 'team04:已收件']);
     return st.join('、');
   });
 
-  await check('3 資格審查與補件', '公開狀態頁只顯示狀態，不顯示退回原因', async () => {
+  await check('3 收件與補件', '公開狀態頁只顯示狀態', async () => {
     const p = await call('publicStatus');
     const text = JSON.stringify(p);
-    assert.ok(text.includes('補件中') && !text.includes('剪接') && !text.includes('後製字幕'));
+    assert.ok(text.includes('可評分') && !text.includes('sha') && !text.includes('reason'));
     return p.teams.map(t => `${t.code}:${t.status}`).join('、');
   });
 
-  await check('3 資格審查與補件', '有組別補件中時，開始評分前會列出', async () => {
+  await check('3 收件與補件', '沒有設定正式版本的組別，開始評分前會列出', async () => {
     const p = await call('adminJudgingPreview', admin);
     assert.deepEqual(p.excluded.map(e => e.code), ['team03', 'team04']);
     return p.excluded.map(e => `${e.code}（${e.reason}）`).join('、');
   });
 
-  await check('3 資格審查與補件', '補件：新版本獨立重審，舊版本與舊審查仍可查', async () => {
+  await check('3 收件與補件', '補件：新版本設為正式版本，舊版本仍可查', async () => {
     tick(60 * 24);
     await fails(/登入已逾時/, 'adminGetBoard', admin);   // 隔天：前一天的登入已失效
     await nextDayLogin();
@@ -155,15 +151,12 @@ console.log('\n演練 A：5 位評審、4 組');
     assert.deepEqual(r.added.map(a => a.label), ['team03_v2']);
     await call('adminSetCurrentVersion', admin, await teamId('team03'), (await ver('team03', 2)).id);
     await call('adminSetReceivedAt', admin, (await ver('team03', 2)).id, new Date(clock - 10 * 60 * 1000).toISOString());
-    assert.equal((await board()).teams.find(t => t.code === 'team03').status.label, '審查中');
-    await call('adminReview', admin, (await ver('team03', 2)).id, 'pass');
-    const old = await ver('team03', 1);
-    assert.equal(old.reviewStatus, 'resubmit');
-    assert.equal(old.reviews[0].timecodes[0].sec, 8.2);
-    return 'v1 退回紀錄保留、v2 通過';
+    assert.equal((await board()).teams.find(t => t.code === 'team03').status.label, '可評分');
+    assert.equal((await ver('team03', 1)).no, 1, '舊版本仍可查');
+    return 'v2 設為正式版本，v1 仍保留';
   });
 
-  await check('3 資格審查與補件', '開始評分：鎖定 3 件，未通過的 team04 不進入評分', async () => {
+  await check('3 收件與補件', '開始評分：鎖定 3 件，沒有正式版本的 team04 不進入評分', async () => {
     tick(60);
     const r = await call('adminSetPhase', admin, 'judging');
     assert.equal(r.locked, 3);
@@ -258,7 +251,7 @@ console.log('\n演練 A：5 位評審、4 組');
     fs.writeFileSync(path.join(OUT, 'rehearsal_成績.csv'), '﻿' + csv);
     const lines = csv.trim().split('\r\n');
     assert.equal(lines.length, 4);
-    assert.match(lines[2], /^2,,team03,.*順序 team03 > team01/);
+    assert.match(lines[2], /^專題組,2,,team03,.*順序 team03 > team01/);   // 第一欄是類別
     return `${filename}（已存 test/out/rehearsal_成績.csv）`;
   });
 
@@ -292,9 +285,9 @@ console.log('\n演練 A：5 位評審、4 組');
     return '改為並列後重新公布';
   });
 
-  await check('6 演練紀錄', '操作紀錄完整（審查、鎖版、退回、同分、公布、撤回）', async () => {
+  await check('6 演練紀錄', '操作紀錄完整（鎖版、退回、同分、公布、撤回）', async () => {
     const actions = new Set((await call('adminLogs', admin, 500)).map(l => l.action));
-    const need = ['create_team', 'sync_videos', 'set_received_at', 'set_current_version', 'review', 'lock_for_judging', 'judge_submit', 'return_score', 'decide_tie', 'export_csv', 'publish', 'revoke'];
+    const need = ['create_team', 'sync_videos', 'set_received_at', 'set_current_version', 'lock_for_judging', 'judge_submit', 'return_score', 'decide_tie', 'export_csv', 'publish', 'revoke'];
     const missing = need.filter(a => !actions.has(a));
     assert.deepEqual(missing, []);
     return `${need.length} 種動作都有記錄`;
@@ -313,7 +306,6 @@ console.log('\n演練 B：3 位評審、2 組');
     for (const t of b.teams) {
       const v = t.versions.find(x => x.checkOk);
       await call('adminSetCurrentVersion', admin, t.id, v.id);
-      await call('adminReview', admin, v.id, 'pass');
     }
     await call('adminSetPhase', admin, 'collecting');
     await call('adminSetPhase', admin, 'judging');
