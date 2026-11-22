@@ -682,10 +682,15 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
   async function adminListScores(token) {
     const acc = await auth(token, 'admin');
     const c = await compOf(acc);
-    const [teams, locks, scores, slots, accounts] = await Promise.all([
-      db.listTeams(c.id), db.listLocks(c.id), db.listScores(c.id), db.listJudgeSlots(c.id), db.listAccounts(c.id)]);
+    const [teams, locks, scores, slots, accounts, runs] = await Promise.all([
+      db.listTeams(c.id), db.listLocks(c.id), db.listScores(c.id), db.listJudgeSlots(c.id), db.listAccounts(c.id), c.ai_judge ? db.listAiRuns(c.id) : []]);
     const name = id => (accounts.find(a => a.id === id) || {}).display_name || '';
     const M = seatCount(c);
+    // AI 的「暫存」分數：只給後台先看，不計入平均、不算收齊
+    const draftOf = teamId => {
+      const latest = runs.filter(r => r.team_id === teamId).sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)))[0];
+      return latest && latest.status === 'draft' && latest.result ? { runId: latest.id, total: Object.values(latest.result.items).reduce((x, y) => x + (y || 0), 0) } : null;
+    };
     const rows = locks.map(l => {
       const t = teams.find(x => x.id === l.team_id);
       const cells = [];
@@ -694,6 +699,8 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
         cells.push(s ? { slot: n, scoreId: s.id, status: s.status, label: SCORE_LABEL[s.status], total: s.status === 'submitted' ? s.total : null, judge: name(s.account_id) }
           : { slot: n, scoreId: null, status: 'none', label: SCORE_LABEL.none, total: null, judge: '' });
       }
+      const ai = aiSlotOf(c);
+      if (ai && ai <= M) cells[ai - 1].draft = draftOf(t.id);
       const submitted = cells.filter(x => x.status === 'submitted').length;
       return { teamId: t.id, code: t.code, name: t.name, workTitle: t.work_title, cells, submitted, complete: submitted === M };
     }).sort((a, b) => a.code.localeCompare(b.code));

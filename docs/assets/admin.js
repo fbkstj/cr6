@@ -256,6 +256,7 @@ function viewScores() {
         <tbody>${r.rows.map(row => `<tr>
           <td><b>${esc(row.code)}</b> ${esc(row.name)}<br><span class="muted small">${esc(row.workTitle)}</span></td>
           ${row.cells.map(c => `<td>${c.scoreId ? `<a href="#" data-act="score" data-id="${c.scoreId}">` : ''}<span class="chip ${SCORE_CHIP[c.status]}">${esc(c.label)}</span>${c.total !== null ? ` <b>${c.total}</b>` : ''}${c.scoreId ? '</a>' : ''}
+            ${c.draft ? `<div class="small"><span class="chip info">暫存</span> <b>${c.draft.total}</b> <span class="muted">未計入平均</span></div>` : ''}
             ${c.judge ? `<div class="muted small">${esc(c.judge)}</div>` : ''}</td>`).join('')}
           <td>${row.complete ? '<span class="chip ok">✓</span>' : `<span class="muted">${row.submitted} / ${r.judgeCount}</span>`}</td>
         </tr>`).join('')}</tbody>

@@ -1172,6 +1172,10 @@ const aiReply = (scores, extra) => Object.assign({
     assert.deepEqual([r.status, r.statusLabel], ['draft', '暫存（未計入）']);
     assert.equal(Object.values(r.result.items).reduce((a, x) => a + x, 0), 35);
     assert.equal((await aiScore('team01')).total, 86, '暫存不影響已送出的 AI 評分');
+    const cellOf = async code => (await call('adminListScores', admin)).rows.find(x => x.code === code).cells[3];
+    assert.deepEqual((await cellOf('team01')).draft, { runId: r.id, total: 35 }, '評分進度表的 AI 欄位看得到暫存分數');
+    assert.equal((await cellOf('team01')).total, 86, '正式分數不變');
+    assert.equal((await cellOf('team02')).draft, null);
     const first = r.id;
     tick(5);
     b = await call('adminAiLocalBegin', admin, team('team01'), true, '人工匯入');       // 暫存可以重做
@@ -1185,6 +1189,7 @@ const aiReply = (scores, extra) => Object.assign({
     await expectErr(/只有「暫存」/, 'adminAiAdopt', admin, nr.id);
     const done = await call('adminAiAdopt', admin, r.id);
     assert.equal(done.status, 'done');
+    assert.equal((await cellOf('team01')).draft, null, '採用後不再顯示暫存');
     assert.equal((await aiScore('team01')).total, 86);
     await expectErr(/只有「暫存」/, 'adminAiAdopt', admin, r.id);
     const logs = (await call('adminLogs', admin)).map(x => x.action);
