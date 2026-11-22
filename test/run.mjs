@@ -527,12 +527,12 @@ console.log('P3 作品與資格審查');
 /* ═════════════ P4 評審評分 ═════════════ */
 
 /** 建立一個已經進入評分階段的競賽：team01、team02 通過，team03 不通過 */
-async function judgingSetup(judgeCount, { teams = 3, fail = ['team03'], aiJudge = false, gemini = null } = {}) {
+async function judgingSetup(judgeCount, { teams = 3, fail = ['team03'], aiJudge = false, gemini = null, creative = [] } = {}) {
   const sha = c => c.repeat(64);
   const e = (team, c) => ({ team, version: 1, source_filename: team + '_v1.mov', source_sha256: sha(c), source_size: 1, duration_sec: 300,
     check_ok: true, check_notes: '', playback_path: `videos/${team}_v1.mp4`, playback_size: 1 });
   const codes = Array.from({ length: teams }, (_, i) => 'team' + String(i + 1).padStart(2, '0'));
-  const ctx = await setup({ judgeCount, teams, aiJudge }, { siteBaseUrl: 'https://example.test/', gemini, fetchJson: async () => ({ versions: codes.map((c, i) => e(c, 'abcdef'[i])) }) });
+  const ctx = await setup({ judgeCount, teams, aiJudge, creative }, { siteBaseUrl: 'https://example.test/', gemini, fetchJson: async () => ({ versions: codes.map((c, i) => e(c, 'abcdef'[i])) }) });
   const admin = (await ctx.call('login', 'admin01', 'admin-pass-01')).token;
   await ctx.call('adminSyncVideos', admin);
   for (const t of (await ctx.call('adminGetBoard', admin)).teams) {
@@ -810,11 +810,11 @@ console.log('P5 結算與公布');
     const { filename, csv } = await call('adminExportCsv', admin);
     assert.match(filename, /成績_\d{4}-\d{2}-\d{2}\.csv$/);
     const lines = csv.trim().split('\r\n');
-    assert.match(lines[0], /^名次,並列,組別代碼,組別名稱,作品名稱,評分版本,評審1總分,評審1姓名/);
+    assert.match(lines[0], /^類別,名次,並列,組別代碼,組別名稱,作品名稱,評分版本,評審1總分,評審1姓名/);
     assert.match(lines[0], /評審5總分,評審5姓名,總分合計,平均,同分處理$/);
-    assert.match(lines[1], /^1,,team02,/);
+    assert.match(lines[1], /^專題組,1,,team02,/);
     assert.match(lines[1], /,445,89\.00,$/);
-    assert.match(lines[2], /^2,,team03,.*順序 team03 > team01 > team04；理由：依「應用及整合性」/);
+    assert.match(lines[2], /^專題組,2,,team03,.*順序 team03 > team01 > team04；理由：依「應用及整合性」/);
     assert.ok(lines[4].includes(`"'=HYPERLINK(""http://x"")"`), '公式開頭要加單引號');
     assert.ok(lines[4].includes('"作品, ""四"""'), '逗號與引號要正確跳脫');
     assert.ok(lines[1].includes('測試評審1'), '主辦方匯出含評審姓名');
@@ -1315,6 +1315,108 @@ async function expectErrOf(ctx, re, fn, ...args) {
   const r = await ctx.api.handle({ fn, args });
   assert.equal(r.ok, false, fn + ' 應該失敗');
   assert.match(r.error, re);
+}
+
+console.log('P8 兩大類：專題組、創意組');
+{
+  const x = await judgingSetup(3, { teams: 4, fail: [], creative: ['team03', 'team04'] });
+  const { call, expectErr, admin, judges, team, board } = x;
+  const idsOf = cat => board.rubrics[cat].items.map(i => i.id);
+  const sc = (cat, ...v) => Object.fromEntries(idsOf(cat).map((id, i) => [id, v[i]]));
+  const cellId = async (code, n) => (await call('adminListScores', admin)).rows.find(r => r.code === code).cells[n].scoreId;
+
+  await step('作品有組別；兩組各有一份評分表，內容不同、各 100 分', async () => {
+    assert.deepEqual(board.teams.map(t => t.category), ['project', 'project', 'creative', 'creative']);
+    assert.deepEqual(board.teams.map(t => t.categoryLabel), ['專題組', '專題組', '創意組', '創意組']);
+    assert.equal(board.rubrics.project.total, 100);
+    assert.equal(board.rubrics.creative.total, 100);
+    assert.notDeepEqual(board.rubrics.project.items.map(i => i.title), board.rubrics.creative.items.map(i => i.title));
+    assert.equal(board.rubrics.creative.items[0].title, '創意設計');
+  });
+
+  await step('評審的作品清單帶組別；評分頁只給該作品所屬組別的評分表', async () => {
+    const list = await call('judgeListWorks', judges.j1);
+    assert.deepEqual(list.works.map(w => w.code + ':' + w.categoryLabel), ['team01:專題組', 'team02:專題組', 'team03:創意組', 'team04:創意組']);
+    const w1 = await call('judgeGetWork', judges.j1, team('team01'));
+    const w3 = await call('judgeGetWork', judges.j1, team('team03'));
+    assert.equal(w1.rubric.category, 'project');
+    assert.equal(w3.rubric.category, 'creative');
+    assert.deepEqual(w3.rubric.items.map(i => i.id), idsOf('creative'));
+    assert.equal(w3.team.categoryLabel, '創意組');
+  });
+
+  await step('創意組作品不能用專題組的評分項目，專題組作品也不能用創意組的', async () => {
+    await expectErr(/不在評分表上/, 'judgeSaveDraft', judges.j1, team('team03'), { items: sc('project', 30, 20, 20, 10), ...GOOD });
+    await expectErr(/不在評分表上/, 'judgeSaveDraft', judges.j1, team('team01'), { items: sc('creative', 30, 20, 20, 10), ...GOOD });
+    await expectErr(/0～30/, 'judgeSubmit', judges.j1, team('team03'), { items: sc('creative', 31, 20, 20, 10), ...GOOD });
+  });
+
+  await step('三位評審評完四件：兩組各自排名，跨組同分不算同分', async () => {
+    const scores = { team01: sc('project', 30, 20, 20, 10), team02: sc('project', 35, 20, 20, 10), team03: sc('creative', 25, 25, 20, 10), team04: sc('creative', 30, 25, 20, 10) };
+    for (const j of ['j1', 'j2', 'j3']) for (const code of Object.keys(scores)) await call('judgeSubmit', judges[j], team(code), { items: scores[code], ...GOOD });
+    const r = await call('adminRanking', admin);
+    assert.deepEqual(r.categories.map(c => c.category), ['project', 'creative']);
+    assert.deepEqual(r.categories[0].rows.map(t => [t.code, t.rank, t.sum]), [['team02', 1, 255], ['team01', 2, 240]]);
+    assert.deepEqual(r.categories[1].rows.map(t => [t.code, t.rank, t.sum]), [['team04', 1, 255], ['team03', 2, 240]]);
+    assert.equal(r.ties.length, 0, 'team01（專題組）和 team03（創意組）都是 80 分，但不同組，不算同分');
+    assert.equal(r.pendingTies, 0);
+    assert.equal(r.ready, true);
+  });
+
+  await step('同組同分仍然要處理，處理只影響這一組', async () => {
+    for (const [n, j] of [[0, 'j1'], [1, 'j2'], [2, 'j3']]) {
+      await call('adminReturnScore', admin, await cellId('team02', n), '重評');
+      await call('judgeSubmit', judges[j], team('team02'), { items: sc('project', 30, 20, 20, 10), ...GOOD });   // team02 也變成 240，和 team01 同組同分
+    }
+    let r = await call('adminRanking', admin);
+    assert.equal(r.pendingTies, 1);
+    assert.equal(r.ties[0].category, 'project');
+    assert.equal(r.categories[1].pendingTies, 0);
+    assert.equal(r.ready, false);
+    await call('adminSetPhase', admin, 'settling');
+    await call('adminDecideTie', admin, r.ties[0].teamIds, r.ties[0].teamIds.slice().reverse(), '依創意與實用性判定');
+    r = await call('adminRanking', admin);
+    assert.equal(r.pendingTies, 0);
+    assert.equal(r.ready, true);
+  });
+
+  await step('結算、匯出、公布：公開結果分成專題組與創意組，各有自己的名次', async () => {
+    const csv = (await call('adminExportCsv', admin)).csv.trim().split('\r\n');
+    assert.match(csv[0], /^類別,名次/);
+    assert.deepEqual(csv.slice(1).map(l => l.split(',').slice(0, 2).join(':')).sort(), ['創意組:1', '創意組:2', '專題組:1', '專題組:2']);
+    await call('adminPublish', admin);
+    const pub = await call('publicResults');
+    assert.deepEqual(pub.categories.map(c => c.label), ['專題組', '創意組']);
+    assert.equal(pub.teams.length, 4);
+    for (const cat of ['project', 'creative']) {
+      assert.deepEqual(pub.teams.filter(t => t.category === cat).map(t => t.rank).sort(), [1, 2], cat);
+    }
+    assert.ok(!JSON.stringify(pub).includes('評審姓名'));
+  });
+
+  await step('組別在開始評分前可以修改，開始評分後鎖定；只能是 project 或 creative', async () => {
+    await expectErr(/已經開始評分|不能/, 'adminUpsertTeam', admin, { id: team('team01'), category: 'creative' });
+    const pre = await setup({ judgeCount: 3, teams: 2 });
+    const a2 = (await pre.call('login', 'admin01', 'admin-pass-01')).token;
+    const id = (await pre.call('adminUpsertTeam', a2, { code: 'team09', name: '新組', category: 'creative' })).id;
+    assert.equal((await pre.call('adminGetBoard', a2)).teams.find(t => t.id === id).category, 'creative');
+    await pre.call('adminUpsertTeam', a2, { id, category: 'project' });
+    assert.equal((await pre.call('adminGetBoard', a2)).teams.find(t => t.id === id).category, 'project');
+    await pre.expectErr(/只能是/, 'adminUpsertTeam', a2, { id, category: 'other' });
+  });
+
+  await step('兩份評分表各自修改：改創意組不影響專題組；總分要 100', async () => {
+    const pre = await setup({ judgeCount: 3, teams: 1 });
+    const a2 = (await pre.call('login', 'admin01', 'admin-pass-01')).token;
+    await pre.call('adminSetPhase', a2, 'collecting');
+    const items = [{ title: '創意設計', max: 50 }, { title: '實用商用', max: 30 }, { title: '實作成效', max: 20 }];
+    const r = await pre.call('adminSaveRubric', a2, items, 'creative');
+    assert.deepEqual(r.items.map(i => i.max), [50, 30, 20]);
+    assert.equal((await pre.call('adminGetRubric', a2, 'project')).items.length, 4, '專題組不變');
+    assert.equal((await pre.call('adminGetRubric', a2, 'creative')).items.length, 3);
+    await pre.expectErr(/必須是 100/, 'adminSaveRubric', a2, [{ title: 'x', max: 60 }], 'creative');
+    await pre.expectErr(/只能是/, 'adminSaveRubric', a2, items, 'other');
+  });
 }
 
 console.log(`\n全部通過：${passed} 項`);

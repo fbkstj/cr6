@@ -25,13 +25,19 @@ async function showList() {
     ${r.canEdit ? '<p class="muted small" style="margin:0">點作品開始評分。可以先暫存，全部確認後再正式送出；送出後要由主辦單位退回才能修改。</p>'
       : '<p class="muted small" style="margin:0">評分已經結束，只能查看。</p>'}
   </div>
-  <div class="works" style="margin-top:16px">
-    ${r.works.map(w => `<button class="card work" data-team="${w.teamId}">
+  ${[['project', '專題組'], ['creative', '創意組']].map(([cat, label]) => {
+    const ws = r.works.filter(w => w.category === cat);
+    if (!ws.length) return '';
+    const n = ws.filter(w => w.status === 'submitted' || w.status === 'others').length;
+    return `<div class="row" style="justify-content:space-between;margin-top:20px"><h2 style="margin:0">${label}</h2><span class="muted small">已完成 ${n} / ${ws.length}</span></div>
+    <div class="works" style="margin-top:8px">
+    ${ws.map(w => `<button class="card work" data-team="${w.teamId}">
       <div class="row" style="justify-content:space-between;width:100%"><b>${esc(w.code)}</b><span class="chip ${CHIP[w.status]}">${esc(w.statusLabel)}</span></div>
       <div style="font-size:1.05rem">${esc(w.workTitle || '（未填作品名稱）')}</div>
       <div class="muted small">${esc(w.name)}・影片 ${fmtDur(w.duration)}${w.total !== null ? `・<b>${w.total} 分</b>` : ''}</div>
     </button>`).join('')}
   </div>`;
+  }).join('')}`;
 }
 
 /* ───────────── 評分頁 ───────────── */
@@ -50,7 +56,7 @@ async function showWork(teamId) {
           <h1 style="margin:0">${esc(w.team.code)}　${esc(w.team.workTitle || '')}</h1>
           <span class="chip ${CHIP[sc.status]}">${esc(sc.statusLabel)}</span>
         </div>
-        <div class="muted small">${esc(w.team.name)}・第 ${w.video.versionNo} 版・${fmtDur(w.video.duration)}</div>
+        <div class="muted small"><span class="chip accent">${esc(w.team.categoryLabel)}</span> ${esc(w.team.name)}・第 ${w.video.versionNo} 版・${fmtDur(w.video.duration)}</div>
         ${w.video.path ? `<video id="player" controls preload="metadata" playsinline src="${esc(w.video.path)}"></video>` : '<div class="notice bad">找不到影片</div>'}
         <div class="row small muted">
           播放速度

@@ -15,7 +15,7 @@ const DEMO = path.join(ROOT, 'test', 'out', 'demo_videos');
 const PORT = Number(process.argv[2]) || 8790;
 
 const db = createMemDb();
-await db.seedDemo({ judgeCount: 3, teams: 3, aiJudge: true });
+await db.seedDemo({ judgeCount: 3, teams: 4, aiJudge: true, creative: ['team03', 'team04'] });
 
 // AI 評審：有 GEMINI_API_KEY 環境變數就用真的 Gemini（會花用額度），否則用模擬（隨機分數，標明是模擬）
 const gemini = process.env.GEMINI_API_KEY

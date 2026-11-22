@@ -89,11 +89,15 @@ export function createMemDb() {
     getTeam: async id => clone(t.teams.find(x => x.id === id) || null),
     insertTeam: async row => {
       if (t.teams.some(x => x.competition_id === row.competition_id && x.code === row.code)) throw new Error('duplicate team');
-      const r = Object.assign({ id: crypto.randomUUID(), name: '', members: '', work_title: '', work_desc: '', created_at: nowIso() }, clone(row));
+      const r = Object.assign({ id: crypto.randomUUID(), name: '', members: '', work_title: '', work_desc: '', category: 'project', created_at: nowIso() }, clone(row));
+      if (!['project', 'creative'].includes(r.category)) throw new Error('bad category');
       t.teams.push(r);
       return clone(r);
     },
-    updateTeam: async (id, patch) => { Object.assign(t.teams.find(x => x.id === id), clone(patch)); },
+    updateTeam: async (id, patch) => {
+      if (patch.category !== undefined && !['project', 'creative'].includes(patch.category)) throw new Error('bad category');
+      Object.assign(t.teams.find(x => x.id === id), clone(patch));
+    },
     deleteTeam: async id => { t.teams = t.teams.filter(x => x.id !== id); },
     listVersions: async cid => clone(t.video_versions.filter(v => v.competition_id === cid)),
     getVersion: async id => clone(t.video_versions.find(v => v.id === id) || null),
@@ -128,7 +132,8 @@ export function createMemDb() {
       const n = t.judge_slots.filter(s => s.competition_id === cid && s.slot_no <= c.judge_count
         && t.accounts.some(a => a.id === s.account_id && a.active && a.role === 'judge')).length;
       if (n < c.judge_count) raise(`評審席位還沒排滿（${n} / ${c.judge_count}）`);
-      if (t.rubric_items.filter(i => i.rubric_id === c.rubric_id).reduce((s, i) => s + i.max_score, 0) !== 100) raise('評分表總分必須是 100');
+      if (t.rubric_items.filter(i => i.rubric_id === c.rubric_id).reduce((s, i) => s + i.max_score, 0) !== 100) raise('專題組評分表總分必須是 100');
+      if (t.rubric_items.filter(i => i.rubric_id === c.rubric_id_creative).reduce((s, i) => s + i.max_score, 0) !== 100) raise('創意組評分表總分必須是 100');
       const ids = teamIdsOf(cid);
       const cur = t.team_current.filter(x => ids.has(x.team_id));
       const pend = cur.filter(x => latestStatus(x.version_id) === 'pending').length;
@@ -149,7 +154,7 @@ export function createMemDb() {
         ai.active = true;
         t.judge_slots.push({ competition_id: cid, slot_no: c.judge_count + 1, account_id: ai.id, assigned_at: nowIso(), replaced_reason: null });
       }
-      t.rubrics.find(r => r.id === c.rubric_id).locked = true;
+      t.rubrics.filter(r => r.id === c.rubric_id || r.id === c.rubric_id_creative).forEach(r => { r.locked = true; });
       c.phase = 'judging';
       t.admin_logs.push({ id: ++seq, competition_id: cid, actor, action: 'lock_for_judging', target: '', detail: { locked: pass.length, excluded, judges: c.judge_count, ai: !!c.ai_judge }, at: nowIso() });
       return { locked: pass.length, excluded };
@@ -171,7 +176,8 @@ export function createMemDb() {
       const team = t.teams.find(x => x.id === teamId && x.competition_id === c.id);
       const lock = team && t.judging_locks.find(l => l.team_id === teamId);
       if (!lock) raise('這件作品不在評分名單中');
-      const ritems = t.rubric_items.filter(i => i.rubric_id === c.rubric_id).sort((a, b) => a.sort - b.sort);
+      const rid = team.category === 'creative' ? c.rubric_id_creative : c.rubric_id;   // 依作品所屬組別的評分表
+      const ritems = t.rubric_items.filter(i => i.rubric_id === rid).sort((a, b) => a.sort - b.sort);
       if (Object.keys(items || {}).some(k => !ritems.some(i => i.id === k))) raise('分數裡有不在評分表上的項目');
       const clean = {};
       let tot = 0;
@@ -288,13 +294,16 @@ export function createMemDb() {
   };
 
   /** 測試資料：等同 SQL 的 create_competition＋5 位評審＋3 個組別（全部是合成資料） */
-  db.seedDemo = async ({ judgeCount = 5, teams = 3, aiJudge = false } = {}) => {
-    const cid = crypto.randomUUID(), rid = crypto.randomUUID();
-    t.competitions.push({ id: cid, name: '測試競賽（合成資料）', active: true, phase: 'setup', judge_count: judgeCount, ai_judge: aiJudge, rubric_id: rid,
+  db.seedDemo = async ({ judgeCount = 5, teams = 3, aiJudge = false, creative = [] } = {}) => {   // creative：屬於創意組的組別代碼，例如 ['team03']
+    const cid = crypto.randomUUID(), rid = crypto.randomUUID(), rid2 = crypto.randomUUID();
+    t.competitions.push({ id: cid, name: '測試競賽（合成資料）', active: true, phase: 'setup', judge_count: judgeCount, ai_judge: aiJudge, rubric_id: rid, rubric_id_creative: rid2,
       show_status_page: true, show_item_scores: false, min_comment_chars: 10 });
-    t.rubrics.push({ id: rid, competition_id: cid, name: '預設評分表', version: 1, locked: false });
+    t.rubrics.push({ id: rid, competition_id: cid, name: '預設評分表', category: 'project', version: 1, locked: false });
+    t.rubrics.push({ id: rid2, competition_id: cid, name: '創意組評分表', category: 'creative', version: 1, locked: false });
     [['專題作品的應用及整合性', 40], ['專題作品與課程相關', 25], ['創意性與實用性', 25], ['作品說明的組織與表達', 10]]
       .forEach(([title, max], k) => t.rubric_items.push({ id: crypto.randomUUID(), rubric_id: rid, sort: k + 1, title, max_score: max, description: '' }));
+    [['創意設計', 30], ['實用商用', 30], ['實作成效', 30], ['作品說明的組織與表達', 10]]
+      .forEach(([title, max], k) => t.rubric_items.push({ id: crypto.randomUUID(), rubric_id: rid2, sort: k + 1, title, max_score: max, description: '' }));
     await db.insertAccount({ competition_id: cid, login_id: 'admin01', display_name: '主辦人員', role: 'admin', active: true });
     await db.setPassword('admin01', 'admin-pass-01');
     for (let i = 1; i <= 5; i++) {
@@ -303,7 +312,7 @@ export function createMemDb() {
       if (i <= judgeCount) t.judge_slots.push({ competition_id: cid, slot_no: i, account_id: a.id, assigned_at: nowIso(), replaced_reason: null });
     }
     for (let i = 1; i <= teams; i++) {
-      t.teams.push({ id: crypto.randomUUID(), competition_id: cid, code: 'team' + String(i).padStart(2, '0'), name: '測試第' + i + '組', members: '', work_title: '測試作品' + i, work_desc: '', created_at: nowIso() });
+      t.teams.push({ id: crypto.randomUUID(), competition_id: cid, code: 'team' + String(i).padStart(2, '0'), name: '測試第' + i + '組', members: '', work_title: '測試作品' + i, work_desc: '', category: creative.includes('team' + String(i).padStart(2, '0')) ? 'creative' : 'project', created_at: nowIso() });
     }
     return cid;
   };

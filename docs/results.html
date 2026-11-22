@@ -20,8 +20,7 @@ try {
   if (res.competition) document.getElementById('title').textContent = res.competition.name;
   if (res.published) {
     document.title = '比賽結果｜' + res.competition.name;
-    main.innerHTML = `<div class="card stack"><h1>比賽結果</h1><p class="muted small" style="margin:0">公布時間：${fmtTime(res.publishedAt)}</p></div>
-      ${res.teams.map(t => `<div class="card stack">
+    const card = (t, items) => `<div class="card stack">
         <div class="row" style="justify-content:space-between">
           <h2 style="margin:0">${t.rank ? `第 ${t.rank} 名${t.tied ? '（並列）' : ''}　` : ''}${esc(t.name || t.code)}</h2>
           <span class="chip accent" style="font-size:1rem">平均 ${t.average === null ? '—' : t.average.toFixed(2)} 分</span>
@@ -31,12 +30,18 @@ try {
         <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr))">
           ${t.judges.map(j => `<div class="card" style="box-shadow:none">
             <div class="row" style="justify-content:space-between"><b>${esc(j.label)}</b><span>${j.total} 分</span></div>
-            ${j.items && res.items ? `<div class="small muted">${res.items.map(i => `${esc(i.title)} ${j.items[i.id] ?? '—'}／${i.max}`).join('　')}</div>` : ''}
+            ${j.items && items ? `<div class="small muted">${items.map(i => `${esc(i.title)} ${j.items[i.id] ?? '—'}／${i.max}`).join('　')}</div>` : ''}
             <div class="small" style="margin-top:6px"><b>優點</b><br>${esc(j.strengths)}</div>
             <div class="small" style="margin-top:6px"><b>改進建議</b><br>${esc(j.improvements)}</div>
           </div>`).join('')}
         </div>
-      </div>`).join('')}`;
+      </div>`;
+    // 專題組、創意組各自一個排行榜，名次是各組自己的名次
+    main.innerHTML = `<div class="card stack"><h1>比賽結果</h1><p class="muted small" style="margin:0">公布時間：${fmtTime(res.publishedAt)}</p></div>
+      ${res.categories.map(cat => {
+        const ts = res.teams.filter(t => t.category === cat.category).sort((a, b) => (a.rank || 999) - (b.rank || 999));
+        return ts.length ? `<h2 style="margin:24px 0 8px">${esc(cat.label)}</h2>${ts.map(t => card(t, cat.items)).join('')}` : '';
+      }).join('')}`;
   } else {
     const st = await api('publicStatus');
     if (!st.competition) { main.innerHTML = '<div class="card muted">目前沒有進行中的競賽。</div>'; }
@@ -46,9 +51,9 @@ try {
       main.innerHTML = `<div class="card stack">
         <h1>收件與資格狀態</h1>
         <p class="muted small" style="margin:0">目前階段：${esc(st.competition.phaseLabel)}。比賽結果尚未公布；退回補件的原因由主辦單位另行通知各組。</p>
-        <div class="table-wrap"><table><thead><tr><th>組別</th><th>作品</th><th>狀態</th></tr></thead>
-        <tbody>${st.teams.map(t => `<tr><td>${esc(t.name || t.code)}</td><td>${esc(t.workTitle) || '—'}</td>
-          <td><span class="chip ${CHIP[t.status] || ''}">${esc(t.status)}</span></td></tr>`).join('') || '<tr><td colspan="3" class="muted">尚無組別</td></tr>'}</tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>類別</th><th>組別</th><th>作品</th><th>狀態</th></tr></thead>
+        <tbody>${st.teams.map(t => `<tr><td>${esc(t.categoryLabel || '')}</td><td>${esc(t.name || t.code)}</td><td>${esc(t.workTitle) || '—'}</td>
+          <td><span class="chip ${CHIP[t.status] || ''}">${esc(t.status)}</span></td></tr>`).join('') || '<tr><td colspan="4" class="muted">尚無組別</td></tr>'}</tbody></table></div>
       </div>`;
     }
   }

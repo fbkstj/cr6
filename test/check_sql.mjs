@@ -263,5 +263,47 @@ await db.query(`select lock_for_judging($1,$2)`, [cidB, adminB]);
 const slB = (await db.query(`select array_agg(slot_no order by slot_no) s from judge_slots where competition_id=$1`, [cidB])).rows[0].s;
 JSON.stringify(slB) === '[1,2,3]' ? ok('AI 關閉時不建立 AI 席位') : bad('AI 關閉', JSON.stringify(slB));
 
+// ───── 兩大類：專題組、創意組 ─────
+const cidK = (await db.query(`select create_competition('分組測試','admin04','主辦4','password123',3) as id`)).rows[0].id;
+const adminK = (await db.query(`select id from accounts where login_id='admin04'`)).rows[0].id;
+const kr = (await db.query(`select category, id from rubrics where competition_id=$1 order by category`, [cidK])).rows;
+const kc = (await db.query(`select rubric_id, rubric_id_creative from competitions where id=$1`, [cidK])).rows[0];
+kr.length === 2 && kr[0].category === 'creative' && kr[1].category === 'project' && kc.rubric_id === kr[1].id && kc.rubric_id_creative === kr[0].id
+  ? ok('create_competition 同時建立專題組與創意組兩份評分表') : bad('兩份評分表', JSON.stringify([kr, kc]));
+const sumK = async rid => (await db.query(`select sum(max_score)::int s from rubric_items where rubric_id=$1`, [rid])).rows[0].s;
+(await sumK(kc.rubric_id)) === 100 && (await sumK(kc.rubric_id_creative)) === 100 ? ok('兩份評分表預設都是 100 分') : bad('兩份評分表總分', '');
+await expectFail('作品組別只能是 project 或 creative', `insert into teams(competition_id, code, category) values($1,'team09','other')`, [cidK]);
+const jk = [];
+for (let i = 1; i <= 3; i++) {
+  jk.push((await db.query(`insert into accounts(competition_id, login_id, display_name, role) values($1,$2,$3,'judge') returning id`, [cidK, 'kj0' + i, 'K評審' + i])).rows[0].id);
+  await db.query(`insert into judge_slots(competition_id, slot_no, account_id) values($1,$2,$3)`, [cidK, i, jk[i - 1]]);
+}
+const mkTeam = async (code, cat) => {
+  const t = (await db.query(`insert into teams(competition_id, code, category) values($1,$2,$3) returning id`, [cidK, code, cat])).rows[0].id;
+  const v = (await db.query(`insert into video_versions(competition_id, team_id, version_no, source_filename, source_sha256, source_size, check_ok, playback_path, duration_sec)
+    values($1,$2,1,$3,$4,100,true,$5,300) returning id`, [cidK, t, code + '_v1.mov', code.slice(-1).repeat(64), 'videos/' + code + '_v1.mp4'])).rows[0].id;
+  await db.query(`insert into team_current(team_id, version_id) values($1,$2)`, [t, v]);
+  await db.query(`insert into reviews(version_id, status) values($1,'pass')`, [v]);
+  return t;
+};
+const tP = await mkTeam('team01', 'project'), tK = await mkTeam('team02', 'creative');
+(await db.query(`select team_rubric($1) r`, [tP])).rows[0].r === kc.rubric_id && (await db.query(`select team_rubric($1) r`, [tK])).rows[0].r === kc.rubric_id_creative
+  ? ok('team_rubric 依作品組別回傳對應的評分表') : bad('team_rubric', '');
+const firstItem = `(select id from rubric_items where rubric_id=$1 order by sort limit 1)`;
+await db.query(`update rubric_items set max_score = max_score + 5 where id = ${firstItem}`, [kc.rubric_id_creative]);
+await db.query(`update competitions set phase='collecting' where id=$1`, [cidK]);
+await expectFail('創意組評分表總分不是 100 不能開始評分', `select lock_for_judging($1,$2)`, [cidK, adminK], /創意組評分表總分必須是 100/);
+await db.query(`update rubric_items set max_score = max_score - 5 where id = ${firstItem}`, [kc.rubric_id_creative]);
+await expectOk('兩份評分表都 100 分可以開始評分', `select lock_for_judging($1,$2)`, [cidK, adminK]);
+const locked = (await db.query(`select count(*)::int n from rubrics where competition_id=$1 and locked`, [cidK])).rows[0].n;
+locked === 2 ? ok('開始評分時兩份評分表一起鎖定') : bad('評分表鎖定', String(locked));
+const itemsOf = async rid => (await db.query(`select id, max_score from rubric_items where rubric_id=$1 order by sort`, [rid])).rows;
+const rp = await itemsOf(kc.rubric_id), rk = await itemsOf(kc.rubric_id_creative);
+const scoreOf = rows => JSON.stringify(Object.fromEntries(rows.map(r => [r.id, r.max_score])));
+await expectFail('創意組作品不能用專題組評分表的項目', `select judge_save($1,$2,$3::jsonb,'','',false)`, [tK, jk[0], scoreOf(rp)], /不在評分表上/);
+await expectFail('專題組作品不能用創意組評分表的項目', `select judge_save($1,$2,$3::jsonb,'','',false)`, [tP, jk[0], scoreOf(rk)], /不在評分表上/);
+const rsub = (await db.query(`select judge_save($1,$2,$3::jsonb,$4,$4,true) r`, [tK, jk[0], scoreOf(rk), okText])).rows[0].r;
+rsub.status === 'submitted' && rsub.total === 100 ? ok('創意組作品依創意組評分表計分') : bad('創意組計分', JSON.stringify(rsub));
+
 console.log(`\n通過 ${pass}，失敗 ${failN}`);
 process.exit(failN ? 1 : 0);

@@ -281,12 +281,19 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     };
   }
 
-  async function rubricView(c) {
-    const r = await db.getRubric(c.rubric_id);
+  /** 兩大類：專題組（project）、創意組（creative）；每件作品屬於其中一組，各有自己的評分表與排名 */
+  const CATEGORIES = ['project', 'creative'];
+  const CATEGORY_LABEL = { project: '專題組', creative: '創意組' };
+  const catOf = t => (t && t.category === 'creative' ? 'creative' : 'project');
+  const rubricIdOf = (c, category) => (category === 'creative' ? c.rubric_id_creative : c.rubric_id);
+  const needCategory = category => { if (!CATEGORIES.includes(category)) fail('組別只能是「專題組」或「創意組」'); return category; };
+
+  async function rubricView(c, category) {
+    const r = await db.getRubric(rubricIdOf(c, category || 'project'));
     if (!r) return { id: null, locked: false, items: [], total: 0 };
     const items = r.items.slice().sort((a, b) => a.sort - b.sort)
       .map(i => ({ id: i.id, title: i.title, max: i.max_score, description: i.description || '' }));
-    return { id: r.id, locked: !!r.locked, items, total: items.reduce((s, i) => s + i.max, 0) };
+    return { id: r.id, category: category || 'project', categoryLabel: CATEGORY_LABEL[category || 'project'], locked: !!r.locked, items, total: items.reduce((s, i) => s + i.max, 0) };
   }
 
   async function adminUpdateCompetition(token, input) {
@@ -322,14 +329,15 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     return { competition: competitionFull(Object.assign({}, c, patch)) };
   }
 
-  async function adminGetRubric(token) {
+  async function adminGetRubric(token, category) {
     const acc = await auth(token, 'admin');
-    return rubricView(await compOf(acc));
+    return rubricView(await compOf(acc), needCategory(category || 'project'));
   }
 
-  async function adminSaveRubric(token, items) {
+  async function adminSaveRubric(token, items, category) {
     const acc = await auth(token, 'admin');
     const c = await compOf(acc);
+    category = needCategory(category || 'project');
     needBeforeJudging(c, '修改評分表');
     if (!Array.isArray(items) || !items.length || items.length > 10) fail('評分表要有 1～10 個項目');
     const clean = items.map((it, i) => {
@@ -341,9 +349,9 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     });
     const total = clean.reduce((s, i) => s + i.max_score, 0);
     if (total !== 100) fail(`各項滿分加起來必須是 100（目前 ${total}）`);
-    await db.saveRubric(c.rubric_id, clean);
-    await log(acc, 'save_rubric', '', { items: clean.map(i => `${i.title} ${i.max_score}`) });
-    return rubricView(c);
+    await db.saveRubric(rubricIdOf(c, category), clean);
+    await log(acc, 'save_rubric', CATEGORY_LABEL[category], { category, items: clean.map(i => `${i.title} ${i.max_score}`) });
+    return rubricView(c, category);
   }
 
   async function adminAssignSlot(token, slotNo, accountId, reason) {
@@ -396,11 +404,16 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     };
     if (input.id) {
       const t = await teamOf(c, input.id);
+      if (input.category !== undefined && input.category !== t.category) {
+        needBeforeJudging(c, '改作品組別');
+        fields.category = needCategory(input.category);
+      }
       await db.updateTeam(t.id, fields);
       await log(acc, 'update_team', t.code, { name: fields.name, workTitle: fields.work_title });
       return { id: t.id };
     }
     needBeforeJudging(c, '新增組別');
+    fields.category = needCategory(input.category || 'project');
     const code = String(input.code || '').trim().toLowerCase();
     if (!TEAM_RE.test(code)) fail('組別代碼格式為 team 加兩位數字，例如 team01');
     if ((await db.listTeams(c.id)).some(t => t.code === code)) fail(code + ' 已經存在');
@@ -511,6 +524,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
       const vs = b.versions.filter(v => v.team_id === t.id).sort((x, y) => y.version_no - x.version_no);
       return {
         id: t.id, code: t.code, name: t.name, members: t.members, workTitle: t.work_title, workDesc: t.work_desc,
+        category: catOf(t), categoryLabel: CATEGORY_LABEL[catOf(t)],
         currentVersionId: b.curBy[t.id] || null, lockedVersionId: b.lockBy[t.id] || null,
         status: teamStatus(c, vs, b.curBy[t.id], b.latestOf, b.lockBy[t.id]),
         versions: vs.map(v => ({
@@ -523,7 +537,8 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
         })),
       };
     });
-    return { competition: competitionFull(c), rubric: await rubricView(c), slots, teams };
+    const rubrics = { project: await rubricView(c, 'project'), creative: await rubricView(c, 'creative') };
+    return { competition: competitionFull(c), rubric: rubrics.project, rubrics, slots, teams };
   }
 
   /** 開始評分前的預覽：會鎖定哪些、哪些不進入評分、還有什麼沒完成 */
@@ -534,8 +549,10 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     const accs = await db.listAccounts(c.id);
     const okSlots = slots.filter(s => accs.some(a => a.id === s.account_id && a.active && a.role === 'judge'));
     if (okSlots.length < c.judge_count) problems.push(`評審席位還沒排滿（${okSlots.length} / ${c.judge_count}）`);
-    const rb = await rubricView(c);
-    if (rb.total !== 100) problems.push('評分表總分必須是 100');
+    for (const cat of CATEGORIES) {
+      const rb = await rubricView(c, cat);
+      if (rb.total !== 100) problems.push(`${CATEGORY_LABEL[cat]}評分表總分必須是 100`);
+    }
     if (c.ai_judge && !gemini) problems.push('已開啟 AI 評審，但伺服器還沒有設定 GEMINI_API_KEY（或到「競賽設定」取消 AI 評審）');
     const willLock = [], excluded = [], pending = [];
     b.teams.forEach(t => {
@@ -571,7 +588,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     }
     // settling → judging：回到評分階段（例如發現要再請評審修改），版本鎖定不變
     if (phase === 'settling') {
-      const r = await computeRanking(c);
+      const r = await rankAll(c);
       if (r.incomplete.length) fail(`還有 ${r.incomplete.length} 件作品的評分沒有收齊：${r.incomplete.map(x => `${x.code}（${x.submitted}/${seatCount(c)}）`).join('、')}`);
     }
     await db.updateCompetition(c.id, { phase });
@@ -612,8 +629,9 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
       const sv = myView(scores.find(s => s.team_id === l.team_id && s.slot_no === slot), acc);
       const sc = sv.mine ? scores.find(s => s.team_id === l.team_id && s.slot_no === slot) : null;
       return { teamId: t.id, code: t.code, name: t.name, workTitle: t.work_title, duration: v.duration_sec === null ? null : Number(v.duration_sec),
+        category: catOf(t), categoryLabel: CATEGORY_LABEL[catOf(t)],
         status: sv.status, statusLabel: SCORE_LABEL[sv.status], total: sc && sc.status === 'submitted' ? sc.total : null };
-    }).sort((a, b) => a.code.localeCompare(b.code));
+    }).sort((a, b) => CATEGORIES.indexOf(a.category) - CATEGORIES.indexOf(b.category) || a.code.localeCompare(b.code));
     const done = works.filter(w => w.status === 'submitted' || w.status === 'others').length;
     return Object.assign(base, { works, done, canEdit: SCORING_PHASES.includes(c.phase) });
   }
@@ -637,9 +655,9 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     }
     const mine = sv.mine ? score : null;
     return {
-      team: { id: t.id, code: t.code, name: t.name, workTitle: t.work_title, workDesc: t.work_desc },
+      team: { id: t.id, code: t.code, name: t.name, workTitle: t.work_title, workDesc: t.work_desc, category: catOf(t), categoryLabel: CATEGORY_LABEL[catOf(t)] },
       video: { path: v.playback_path, duration: v.duration_sec === null ? null : Number(v.duration_sec), versionNo: v.version_no },
-      rubric: await rubricView(c),
+      rubric: await rubricView(c, catOf(t)),
       minCommentChars: c.min_comment_chars,
       slot,
       score: {
@@ -702,8 +720,8 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
       const ai = aiSlotOf(c);
       if (ai && ai <= M) cells[ai - 1].draft = draftOf(t.id);
       const submitted = cells.filter(x => x.status === 'submitted').length;
-      return { teamId: t.id, code: t.code, name: t.name, workTitle: t.work_title, cells, submitted, complete: submitted === M };
-    }).sort((a, b) => a.code.localeCompare(b.code));
+      return { teamId: t.id, code: t.code, name: t.name, workTitle: t.work_title, category: catOf(t), categoryLabel: CATEGORY_LABEL[catOf(t)], cells, submitted, complete: submitted === M };
+    }).sort((a, b) => CATEGORIES.indexOf(a.category) - CATEGORIES.indexOf(b.category) || a.code.localeCompare(b.code));
     const judges = Array.from({ length: M }, (_, i) => {
       const s = slots.find(x => x.slot_no === i + 1);
       return { slot: i + 1, name: s ? name(s.account_id) : '', isAi: i + 1 === aiSlotOf(c), done: rows.filter(r => r.cells[i].status === 'submitted').length };
@@ -723,7 +741,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     return {
       id: s.id, team: { code: t.code, name: t.name }, slot: s.slot_no, judge: name(s.account_id), status: s.status, statusLabel: SCORE_LABEL[s.status],
       items: s.items || {}, total: s.total, strengths: s.strengths, improvements: s.improvements, submittedAt: s.submitted_at,
-      rubric: await rubricView(c),
+      rubric: await rubricView(c, catOf(t)),
       history: hist.map(h => ({ action: h.action, at: h.at, actor: name(h.actor), reason: h.reason, total: h.snapshot ? h.snapshot.total : null })),
       canReturn: s.status === 'submitted' && SCORING_PHASES.includes(c.phase),
     };
@@ -749,10 +767,12 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
    * - 所有作品的 N 相同，所以直接比「總分和」（整數），等同比較未四捨五入的平均，沒有小數誤差。
    * - 名次「1、2、2、4」；同分群組要主辦方決定先後（或並列）並填理由，才算可以公布。
    */
-  async function computeRanking(c) {
+  async function computeRanking(c, category) {
+    category = category || 'project';
     const N = seatCount(c);   // 老師 N 人＋AI（開啟時）
-    const [teams, locks, scores, accounts, decisions, versions] = await Promise.all([
+    const [teams, allLocks, scores, accounts, decisions, versions] = await Promise.all([
       db.listTeams(c.id), db.listLocks(c.id), db.listScores(c.id), db.listAccounts(c.id), db.listTieDecisions(c.id), db.listVersions(c.id)]);
+    const locks = allLocks.filter(l => catOf(teams.find(x => x.id === l.team_id)) === category);   // 只排這一組的作品
     const name = id => (accounts.find(a => a.id === id) || {}).display_name || '';
     const rows = locks.map(l => {
       const t = teams.find(x => x.id === l.team_id);
@@ -760,7 +780,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
       const subs = scores.filter(s => s.team_id === t.id && s.status === 'submitted' && s.slot_no <= N).sort((a, b) => a.slot_no - b.slot_no);
       const sum = subs.reduce((s, x) => s + x.total, 0);
       return {
-        teamId: t.id, code: t.code, name: t.name, workTitle: t.work_title, versionNo: v.version_no,
+        teamId: t.id, code: t.code, name: t.name, workTitle: t.work_title, versionNo: v.version_no, category,
         complete: subs.length === N, submitted: subs.length, sum: subs.length === N ? sum : null,
         average: subs.length === N ? sum / N : null,
         judges: subs.map(s => ({ slot: s.slot_no, judge: name(s.account_id), total: s.total, items: s.items || {}, strengths: s.strengths, improvements: s.improvements })),
@@ -798,17 +818,36 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
       i = k + 1;
     }
     const pendingTies = ties.filter(t => !t.decision).length;
-    return { judgeCount: N, aiSlot: aiSlotOf(c), rows: done, incomplete, ties, pendingTies, ready: !incomplete.length && !pendingTies && done.length > 0 };
+    return { category, categoryLabel: CATEGORY_LABEL[category], judgeCount: N, aiSlot: aiSlotOf(c), rows: done, incomplete, ties, pendingTies,
+      ready: !incomplete.length && !pendingTies && done.length > 0 };
+  }
+
+  /** 兩組各自排名；沒有作品的組別不影響整體是否可以公布 */
+  async function rankAll(c) {
+    const cats = [];
+    for (const cat of CATEGORIES) {
+      const r = await computeRanking(c, cat);
+      r.items = (await rubricView(c, cat)).items.map(i => ({ id: i.id, title: i.title, max: i.max }));
+      r.empty = !r.rows.length && !r.incomplete.length;
+      cats.push(r);
+    }
+    const used = cats.filter(x => !x.empty);
+    return {
+      judgeCount: seatCount(c), aiSlot: aiSlotOf(c), categories: cats,
+      rows: used.flatMap(x => x.rows), items: cats[0].items,   // 兩組合在一起的清單（名次是各組自己的），相容用；畫面請用 categories
+      incomplete: used.flatMap(x => x.incomplete), pendingTies: used.reduce((n, x) => n + x.pendingTies, 0),
+      ties: used.flatMap(x => x.ties.map(t => Object.assign({ category: x.category }, t))),
+      ready: used.length > 0 && used.every(x => x.ready),
+    };
   }
 
   async function adminRanking(token) {
     const acc = await auth(token, 'admin');
     const c = await compOf(acc);
     if (beforeJudging(c)) fail('還沒有開始評分');
-    const r = await computeRanking(c);
+    const r = await rankAll(c);
     const pub = await db.getLivePublication(c.id);
-    return Object.assign(r, { phase: c.phase, phaseLabel: PHASE_LABEL[c.phase], publishedAt: pub ? pub.published_at : null,
-      items: (await rubricView(c)).items.map(i => ({ id: i.id, title: i.title, max: i.max })) });
+    return Object.assign(r, { phase: c.phase, phaseLabel: PHASE_LABEL[c.phase], publishedAt: pub ? pub.published_at : null });
   }
 
   async function adminDecideTie(token, teamIds, ordering, reason) {
@@ -818,15 +857,16 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     reason = String(reason || '').trim();
     if (!reason) fail('同分處理必須填寫理由');
     if (reason.length > 500) fail('理由最多 500 字');
-    const r = await computeRanking(c);
+    const r = await rankAll(c);
     const tie = r.ties.find(t => Array.isArray(teamIds) && sameSet(t.teamIds, teamIds));
     if (!tie) fail('找不到這個同分群組（可能評分有變動，請重新整理）');
+    const catRows = r.categories.find(x => x.category === tie.category).rows;
     let value;
     if (ordering === 'tied') value = { tied: true };
     else if (Array.isArray(ordering) && sameSet(ordering, tie.teamIds) && new Set(ordering).size === ordering.length) value = ordering;
     else fail('先後順序要包含這個同分群組的每一組，而且不能重複');
     await db.insertTieDecision({ competition_id: c.id, team_ids: tie.teamIds, ordering: value, reason, decided_by: acc.id, decided_at: iso(now()) });
-    await log(acc, 'decide_tie', tie.codes.join('、'), { ordering: value === 'tied' || value.tied ? '並列' : ordering.map(id => r.rows.find(x => x.teamId === id).code), reason });
+    await log(acc, 'decide_tie', tie.codes.join('、'), { ordering: value === 'tied' || value.tied ? '並列' : ordering.map(id => catRows.find(x => x.teamId === id).code), reason });
     return { ok: true };
   }
 
@@ -841,27 +881,27 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     const acc = await auth(token, 'admin');
     const c = await compOf(acc);
     if (beforeJudging(c)) fail('還沒有開始評分');
-    const r = await computeRanking(c);
-    const head = ['名次', '並列', '組別代碼', '組別名稱', '作品名稱', '評分版本'];
+    const R = await rankAll(c);
+    const head = ['類別', '名次', '並列', '組別代碼', '組別名稱', '作品名稱', '評分版本'];
     const M = seatCount(c);
     for (let n = 1; n <= M; n++) head.push(`評審${n}總分`, `評審${n}姓名`);
     head.push('總分合計', '平均', '同分處理');
     const tieNote = row => {
-      const t = r.ties.find(x => x.teamIds.includes(row.teamId));
+      const t = R.ties.find(x => x.teamIds.includes(row.teamId));
       if (!t) return '';
       if (!t.decision) return `與 ${t.codes.filter(x => x !== row.code).join('、')} 同分，尚未處理`;
       return `${t.decision.type === 'tied' ? '並列' : '順序 ' + t.decision.order.join(' > ')}；理由：${t.decision.reason}（${t.decision.by}）`;
     };
     const lines = [head];
-    r.rows.concat(r.incomplete).forEach(row => {
-      const line = [row.rank ?? '未完成', row.tied ? '是' : '', row.code, row.name, row.workTitle, row.versionNo ? 'v' + row.versionNo : ''];
+    R.categories.forEach(cat => cat.rows.concat(cat.incomplete).forEach(row => {
+      const line = [cat.categoryLabel, row.rank ?? '未完成', row.tied ? '是' : '', row.code, row.name, row.workTitle, row.versionNo ? 'v' + row.versionNo : ''];
       for (let n = 1; n <= M; n++) {
         const j = row.judges.find(x => x.slot === n);
         line.push(j ? j.total : '', j ? j.judge + (n === aiSlotOf(c) && gemini ? `（${gemini.model}）` : '') : '');
       }
       line.push(row.sum ?? '', row.average === null ? '' : row.average.toFixed(2), tieNote(row));
       lines.push(line);
-    });
+    }));
     await log(acc, 'export_csv', '', { rows: lines.length - 1 });
     const date = new Date(now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
     return { filename: `${c.name}_成績_${date}.csv`, csv: lines.map(l => l.map(csvCell).join(',')).join('\r\n') + '\r\n' };
@@ -871,19 +911,21 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     const acc = await auth(token, 'admin');
     const c = await compOf(acc);
     if (c.phase !== 'settling') fail('只有「結算」階段可以公布');
-    const r = await computeRanking(c);
+    const r = await rankAll(c);
     if (r.incomplete.length) fail(`還有 ${r.incomplete.length} 件作品的評分沒有收齊：${r.incomplete.map(x => x.code).join('、')}`);
     if (r.pendingTies) fail(`還有 ${r.pendingTies} 組同分沒有處理`);
-    const rb = await rubricView(c);
-    // 公開快照不標示哪一席是 AI（老師決定：和老師一樣只顯示編號）
+    if (!r.ready) fail('沒有可以公布的作品');
+    // 公開快照不標示哪一席是 AI（老師決定：和老師一樣只顯示編號）。teams 是兩組合在一起的清單，名次是各組自己的名次
+    const used = r.categories.filter(x => !x.empty);
     const snapshot = {
       judgeCount: seatCount(c), showItemScores: !!c.show_item_scores,
-      items: rb.items.map(i => ({ id: i.id, title: i.title, max: i.max })),
-      teams: r.rows.map(row => ({
+      categories: used.map(x => ({ category: x.category, label: x.categoryLabel, items: x.items })),
+      teams: used.flatMap(cat => cat.rows.map(row => ({
+        category: cat.category,
         rank: row.rank, tied: row.tied, tieBroken: !!row.tieBroken, code: row.code, name: row.name, workTitle: row.workTitle,
         average: Math.round(row.average * 10000) / 10000,
         judges: row.judges.map(j => ({ slot: j.slot, total: j.total, strengths: j.strengths, improvements: j.improvements, items: j.items })),
-      })),
+      }))),
     };
     await db.publishResults(c.id, acc.id, snapshot);   // 資料庫函式：再檢查一次收齊，並一次完成公布與切換階段
     return { ok: true, teams: snapshot.teams.length };
@@ -943,6 +985,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
       '',
       `競賽：${c.name}`,
       `組別：${t.name || t.code}`,
+      `組別：${CATEGORY_LABEL[catOf(t)]}`,
       `作品名稱：${t.work_title || '（未填）'}`,
       `作品說明：${t.work_desc || '（未填）'}`,
       `影片長度：${mmss(v.duration_sec)}`,
@@ -1028,14 +1071,16 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
       const mine = runs.filter(r => r.team_id === t.id).sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)));
       return {
         teamId: t.id, code: t.code, name: t.name, workTitle: t.work_title, duration: v.duration_sec === null ? null : Number(v.duration_sec),
+        category: catOf(t), categoryLabel: CATEGORY_LABEL[catOf(t)],
         score: sc ? { id: sc.id, status: sc.status, label: SCORE_LABEL[sc.status], total: sc.status === 'submitted' ? sc.total : null } : { id: null, status: 'none', label: SCORE_LABEL.none, total: null },
         run: runView(mine[0] || null), runCount: mine.length,
       };
-    }).sort((a, b) => a.code.localeCompare(b.code));
+    }).sort((a, b) => CATEGORIES.indexOf(a.category) - CATEGORIES.indexOf(b.category) || a.code.localeCompare(b.code));
     return {
       enabled: !!c.ai_judge, configured: !!gemini, model: gemini ? gemini.model : '', phase: c.phase, phaseLabel: PHASE_LABEL[c.phase],
       canRun: !!c.ai_judge && !!gemini && SCORING_PHASES.includes(c.phase), aiSlot: slot, minCommentChars: c.min_comment_chars,
-      items: (await rubricView(c)).items, rows,
+      items: (await rubricView(c, 'project')).items,   // 專題組（舊欄位，相容用）
+      itemsByCategory: { project: (await rubricView(c, 'project')).items, creative: (await rubricView(c, 'creative')).items }, rows,
     };
   }
 
@@ -1074,14 +1119,14 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     model = str(model, 60).trim() || 'gemini';
     const at = iso(now());
     const run = await db.insertAiRun({
-      competition_id: c.id, team_id: t.id, version_id: v.id, rubric_id: c.rubric_id, model, prompt_version: AI_PROMPT_VERSION,
+      competition_id: c.id, team_id: t.id, version_id: v.id, rubric_id: rubricIdOf(c, catOf(t)), model, prompt_version: AI_PROMPT_VERSION,
       status: 'generating', gemini_job: LOCAL_JOB, started_by: acc.id, started_at: at, updated_at: at, problems: [],
     });
     await log(acc, 'ai_start', `${t.code}_v${v.version_no}`, { run: run.id, model, rerun: !!rerun, local: true });
     return {
       runId: run.id, team: { id: t.id, code: t.code, name: t.name },
       video: { path: v.playback_path, versionNo: v.version_no, duration: v.duration_sec === null ? null : Number(v.duration_sec) },
-      prompt: aiPrompt(c, t, v, await rubricView(c)),
+      prompt: aiPrompt(c, t, v, await rubricView(c, catOf(t))),
     };
   }
 
@@ -1114,7 +1159,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     const { t, v } = await aiPreflight(c, teamId, rerun);
     const at = iso(now());
     const run = await db.insertAiRun({
-      competition_id: c.id, team_id: t.id, version_id: v.id, rubric_id: c.rubric_id, model: gemini.model, prompt_version: AI_PROMPT_VERSION,
+      competition_id: c.id, team_id: t.id, version_id: v.id, rubric_id: rubricIdOf(c, catOf(t)), model: gemini.model, prompt_version: AI_PROMPT_VERSION,
       status: 'uploading', started_by: acc.id, started_at: at, updated_at: at, problems: [],
     });
     await log(acc, 'ai_start', `${t.code}_v${v.version_no}`, { run: run.id, model: gemini.model, rerun: !!rerun });
@@ -1170,7 +1215,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
       const t = await db.getTeam(r.team_id);
       const v = await db.getVersion(r.version_id);
       try {
-        const job = await gemini.startJob(f.uri || r.gemini_uri, aiPrompt(c, t, v, await rubricView(c)));
+        const job = await gemini.startJob(f.uri || r.gemini_uri, aiPrompt(c, t, v, await rubricView(c, catOf(t))));
         await db.updateAiRun(r.id, { gemini_job: job.id, usage: { attempts: job.attempts }, updated_at: iso(now()) });
       } catch (e) { return failRun(String(e && e.message || e)); }
       return runView(await db.getAiRun(r.id));
@@ -1199,7 +1244,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
   async function completeRun(c, acc, r, text, usage, draft) {
     const t = await db.getTeam(r.team_id);
     const v = await db.getVersion(r.version_id);
-    const rb = await rubricView(c);
+    const rb = await rubricView(c, catOf(t));
     const { result, problems } = aiParse(text, c, v, rb);
     if (!text) problems.unshift('AI 沒有回傳內容');
     await db.updateAiRun(r.id, { raw_output: String(text || '').slice(0, 20000), result, problems, usage, updated_at: iso(now()) });
@@ -1259,7 +1304,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     const latest = (await db.listAiRuns(c.id)).filter(x => x.team_id === r.team_id).sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)))[0];
     if (latest && latest.id !== r.id) fail('這件作品已經有更新的 AI 評分紀錄，請重新整理');
     input = input || {};
-    const rb = await rubricView(c);
+    const rb = await rubricView(c, catOf(await db.getTeam(r.team_id)));
     const base = r.result || { items: {} };
     const given = input.items && typeof input.items === 'object' ? input.items : {};
     const items = {}, changed = {};
@@ -1302,7 +1347,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     const reason = String(input.reason || '').trim();
     if (!reason) fail('補分必須填寫理由');
     if (reason.length > 500) fail('理由最多 500 字');
-    const rb = await rubricView(c);
+    const rb = await rubricView(c, catOf(await db.getTeam(r.team_id)));
     const base = (r.result && r.result.items) || {};
     const given = input.items && typeof input.items === 'object' ? input.items : {};
     const items = {}, changed = {};
@@ -1341,7 +1386,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
       teams: b.teams.map(t => {
         const vs = b.versions.filter(v => v.team_id === t.id);
         const s = teamStatus(c, vs, b.curBy[t.id], b.latestOf, b.lockBy[t.id]);
-        return { code: t.code, name: t.name, workTitle: t.work_title, status: s.label };
+        return { code: t.code, name: t.name, workTitle: t.work_title, category: catOf(t), categoryLabel: CATEGORY_LABEL[catOf(t)], status: s.label };
       }),
     };
   }
@@ -1354,13 +1399,21 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     if (!pub) return { published: false, competition: { name: c.name } };
     const s = pub.snapshot || {};
     const showItems = !!s.showItemScores;
+    // 舊快照（沒有分組）當作只有專題組
+    const cats = (Array.isArray(s.categories) ? s.categories : [{ category: 'project', items: s.items }]).map(x => ({
+      category: x.category === 'creative' ? 'creative' : 'project',
+      label: CATEGORY_LABEL[x.category === 'creative' ? 'creative' : 'project'],
+      items: showItems && Array.isArray(x.items) ? x.items.map(i => ({ id: String(i.id), title: String(i.title), max: Number(i.max) })) : null,
+    }));
     return {
       published: true,
       competition: { name: c.name },
       publishedAt: pub.published_at,
       judgeCount: Number(s.judgeCount) || null,
-      items: showItems && Array.isArray(s.items) ? s.items.map(i => ({ id: String(i.id), title: String(i.title), max: Number(i.max) })) : null,
+      categories: cats,
+      items: cats.length ? cats[0].items : null,   // 舊欄位（第一組的分項），相容用
       teams: (Array.isArray(s.teams) ? s.teams : []).map(t => ({
+        category: t.category === 'creative' ? 'creative' : 'project',
         rank: Number(t.rank) || null,
         tied: !!t.tied,
         tieBroken: !!t.tieBroken,
