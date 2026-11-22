@@ -82,6 +82,34 @@ node tools/ai_score.mjs --all
 
 影片從 `docs/videos/` 讀取（和網站上的是同一份）；本機沒有時才從網站下載。
 
+## 匯入 AI 評分 JSON：tools/import_ai_json.mjs
+
+AI 評分如果不是程式呼叫 Gemini 得到的（例如在 Gemini 網頁版或別的工具評完，結果存成檔案），用這支把檔案送進評分系統。伺服器用和後台一樣的規則驗證（分數整數且不超過滿分、時間點在影片長度內、評語字數），通過就送出到 AI 評審席位，並記錄來源是「人工匯入」。
+
+檔案放在 `AI評分結果/team01.json`…（這個資料夾在 `.gitignore`，不會推上公開 repo）。格式：
+
+```
+{"items":[{"no":1,"score":整數,"reason":"理由","evidence":[{"time":"分:秒","note":"說明"}]}, …共四項],
+ "strengths":"作品優點","improvements":"改進建議"}
+```
+
+以底線開頭的欄位（例如 `_source`）只是備註，會被忽略。
+
+```
+node tools/import_ai_json.mjs --all
+```
+
+1. 輸入主辦人員帳號（直接按 Enter＝admin01）與密碼（不顯示、不存檔）。
+2. 程式先列出每件要匯入的分數，**輸入 y 才會寫入**。
+3. 需要正式系統在「評分」或「結算」階段、競賽有開啟 AI 評審。
+
+| 指令 | 用途 |
+|---|---|
+| `node tools/import_ai_json.mjs team01` | 只匯入 team01（可以列好幾組） |
+| `node tools/import_ai_json.mjs --all --rerun` | 已經有 AI 評分也取代（舊的留在更正歷程） |
+| `--dir 資料夾`、`--label 名稱` | 換檔案資料夾；改記在紀錄裡的來源名稱 |
+| `--yes` | 不再詢問直接寫入（演練用） |
+
 ## 測試
 
 `python test/test_videos.py`：用合成測試片驗證全部檢查規則、直式影片、音畫同步與碼率上限（約 5 分鐘）。

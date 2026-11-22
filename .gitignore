@@ -30,3 +30,8 @@ Claude outputs/
 desktop.ini
 Thumbs.db
 .DS_Store
+
+# AI 評分草稿與報告（評分結果公布前不可公開）
+八組專題評分結果.md
+八組專題評分結果.csv
+AI評分結果/
