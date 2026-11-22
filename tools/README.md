@@ -72,7 +72,7 @@ python tools/process_videos.py
 node tools/import_ai_json.mjs --all
 ```
 
-1. 輸入主辦人員帳號（直接按 Enter＝admin01）與密碼（不顯示、不存檔）。
+1. 輸入主辦人員帳號（直接按 Enter＝admin）與密碼（不顯示、不存檔）。
 2. 程式先列出每件要匯入的分數，**輸入 y 才會寫入**。
 3. 需要正式系統在「評分」或「結算」階段、競賽有開啟 AI 評審。
 

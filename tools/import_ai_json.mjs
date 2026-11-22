@@ -105,7 +105,7 @@ async function api(fn, ...args) {
 
 /* ───── 主程式 ───── */
 console.log(`評分系統：${opt.api}`);
-const loginId = (await ask('主辦人員帳號（直接按 Enter＝admin01）：')) || 'admin01';
+const loginId = (await ask('主辦人員帳號（直接按 Enter＝admin）：')) || 'admin';
 const password = await ask('密碼（輸入時不會顯示）：', true);
 token = (await api('login', loginId, password)).token;
 if (!token) { console.error('登入失敗'); process.exit(1); }
