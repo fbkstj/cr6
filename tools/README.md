@@ -107,6 +107,7 @@ node tools/import_ai_json.mjs --all
 |---|---|
 | `node tools/import_ai_json.mjs team01` | 只匯入 team01（可以列好幾組） |
 | `node tools/import_ai_json.mjs --all --rerun` | 已經有 AI 評分也取代（舊的留在更正歷程） |
+| `node tools/import_ai_json.mjs --all --draft` | 只「暫存」：先存起來看，不計入平均；到後台「AI 評分」分頁按「採用」才算數 |
 | `--dir 資料夾`、`--label 名稱` | 換檔案資料夾；改記在紀錄裡的來源名稱 |
 | `--yes` | 不再詢問直接寫入（演練用） |
 

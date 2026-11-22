@@ -240,6 +240,7 @@ lgA.ai === true && lgA.judges === 3 ? ok('鎖版紀錄寫明老師人數與 AI')
 await expectFail('ai_runs 狀態只能是規定的值', `insert into ai_runs(competition_id, team_id, version_id, model, prompt_version, status) values($1,$2,$3,'m','v1','weird')`, [cidA, tA, vA]);
 await expectOk('建立 ai_runs 紀錄', `insert into ai_runs(competition_id, team_id, version_id, model, prompt_version, status) values($1,$2,$3,'m','v1','uploading')`, [cidA, tA, vA]);
 await expectOk('非同步：ai_runs 可記錄 Gemini 評分編號與 finishing 狀態', `insert into ai_runs(competition_id, team_id, version_id, model, prompt_version, status, gemini_job) values($1,$2,$3,'m','v1','finishing','v1_abc')`, [cidA, tA, vA]);
+await expectOk('暫存：ai_runs 可記錄 draft 狀態', `insert into ai_runs(competition_id, team_id, version_id, model, prompt_version, status) values($1,$2,$3,'m','v1','draft')`, [cidA, tA, vA]);
 const rlsA = (await db.query(`select relrowsecurity r from pg_class where relname='ai_runs'`)).rows[0].r;
 const anonA = (await db.query(`select count(*)::int n from information_schema.role_table_grants where grantee in ('anon','authenticated') and table_name='ai_runs'`)).rows[0].n;
 rlsA && anonA === 0 ? ok('ai_runs 開啟 RLS、anon 沒有權限') : bad('ai_runs 權限', rlsA + ' ' + anonA);

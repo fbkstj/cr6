@@ -17,6 +17,7 @@
 //   --dir 資料夾      預設 AI評分結果
 //   --rerun           已經有 AI 評分的作品也重新匯入（新結果驗證通過才取代舊的，舊的留在更正歷程）
 //   --label 名稱      記在 AI 評分紀錄的「模型」欄位，預設「人工匯入」
+//   --draft           只暫存（不計入平均），到後台「AI 評分」分頁看過再按「採用」
 //   --yes             不再詢問，直接寫入（演練時用）
 //   --api 網址        評分系統 API，預設讀 docs/config.js
 import fs from 'node:fs';
@@ -28,11 +29,12 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /* ───── 參數 ───── */
 const argv = process.argv.slice(2);
-const opt = { all: false, rerun: false, yes: false, dir: 'AI評分結果', label: '人工匯入', api: '', teams: [] };
+const opt = { all: false, rerun: false, draft: false, yes: false, dir: 'AI評分結果', label: '人工匯入', api: '', teams: [] };
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === '--all') opt.all = true;
   else if (a === '--rerun') opt.rerun = true;
+  else if (a === '--draft') opt.draft = true;
   else if (a === '--yes') opt.yes = true;
   else if (a === '--dir') opt.dir = argv[++i];
   else if (a === '--label') opt.label = argv[++i];
@@ -127,7 +129,7 @@ for (const f of files) {
 }
 if (!todo.length) { console.log('\n沒有可以匯入的檔案。'); process.exit(0); }
 if (!opt.yes) {
-  const yn = await ask(`\n確定匯入以上 ${todo.length} 件到 AI 評審席位嗎？（輸入 y 確定，其他任何輸入都取消）：`);
+  const yn = await ask(`\n確定${opt.draft ? '暫存' : '匯入'}以上 ${todo.length} 件${opt.draft ? '（不計入平均，之後在後台按「採用」）' : '到 AI 評審席位'}嗎？（輸入 y 確定，其他任何輸入都取消）：`);
   if (yn.toLowerCase() !== 'y') { console.log('已取消，沒有寫入任何資料。'); process.exit(0); }
 }
 
@@ -136,8 +138,9 @@ for (const { f, row } of todo) {
   let line;
   try {
     const b = await api('adminAiLocalBegin', row.teamId, opt.rerun, opt.label);
-    const res = await api('adminAiLocalFinish', b.runId, { text: f.text, usage: {} });
-    if (res.status === 'done') line = `✓ 完成，總分 ${Object.values(res.result.items).reduce((s, x) => s + x, 0)}`;
+    const res = await api('adminAiLocalFinish', b.runId, { text: f.text, usage: {}, draft: opt.draft });
+    if (res.status === 'draft') line = `✓ 已暫存，合計 ${Object.values(res.result.items).reduce((s, x) => s + x, 0)}（尚未計入平均，到後台按「採用」）`;
+    else if (res.status === 'done') line = `✓ 完成，總分 ${Object.values(res.result.items).reduce((s, x) => s + x, 0)}`;
     else if (res.status === 'needs_review') line = `△ 需要處理：${(res.problems || []).join('；')}`;
     else line = `✗ 失敗：${res.error || res.status}`;
   } catch (e) { line = `✗ 失敗：${e.message}`; }

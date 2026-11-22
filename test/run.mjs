@@ -1166,6 +1166,31 @@ const aiReply = (scores, extra) => Object.assign({
     assert.equal((await aiScore('team02')).total, 77, '都不影響已送出的 AI 評分');
   });
 
+  await step('暫存：先看 AI 分數但不計入；採用後才寫進席位並計入', async () => {
+    let b = await call('adminAiLocalBegin', admin, team('team01'), true, '人工匯入');
+    let r = await call('adminAiLocalFinish', admin, b.runId, { text: JSON.stringify(aiReply([10, 10, 10, 5])), draft: true });
+    assert.deepEqual([r.status, r.statusLabel], ['draft', '暫存（未計入）']);
+    assert.equal(Object.values(r.result.items).reduce((a, x) => a + x, 0), 35);
+    assert.equal((await aiScore('team01')).total, 86, '暫存不影響已送出的 AI 評分');
+    const first = r.id;
+    tick(5);
+    b = await call('adminAiLocalBegin', admin, team('team01'), true, '人工匯入');       // 暫存可以重做
+    r = await call('adminAiLocalFinish', admin, b.runId, { text: JSON.stringify(aiReply([35, 22, 20, 9])), draft: true });
+    assert.equal(r.status, 'draft');
+    await expectErr(/更新的 AI 評分紀錄/, 'adminAiAdopt', admin, first);
+    await expectErr(/不能使用此功能/, 'adminAiAdopt', judges.j1, r.id);
+    let bad = await call('adminAiLocalBegin', admin, team('team02'), true, '人工匯入');   // 不合格的檔案仍標「需要處理」，不能採用
+    const nr = await call('adminAiLocalFinish', admin, bad.runId, { text: JSON.stringify(aiReply([30, null, 18, 8])), draft: true });
+    assert.equal(nr.status, 'needs_review');
+    await expectErr(/只有「暫存」/, 'adminAiAdopt', admin, nr.id);
+    const done = await call('adminAiAdopt', admin, r.id);
+    assert.equal(done.status, 'done');
+    assert.equal((await aiScore('team01')).total, 86);
+    await expectErr(/只有「暫存」/, 'adminAiAdopt', admin, r.id);
+    const logs = (await call('adminLogs', admin)).map(x => x.action);
+    assert.ok(logs.includes('ai_draft') && logs.includes('ai_adopt'));
+  });
+
   await step('結算：每件作品要收齊 3 位老師＋AI＝4 份，平均 ÷ 4', async () => {
     for (const code of ['team01', 'team02']) {
       for (const j of ['j1', 'j2', 'j3']) await call('judgeSubmit', judges[j], team(code), { items: items(30, 20, 20, 10), ...GOOD });

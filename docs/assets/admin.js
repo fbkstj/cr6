@@ -15,7 +15,7 @@ const ACTION = {
   replace_judge: '替補評審', clear_slot: '清空席位', create_team: '新增組別', update_team: '修改組別', delete_team: '刪除組別',
   set_received_at: '填寫收件時間', set_current_version: '設定正式版本', review: '資格審查', set_phase: '切換階段', lock_for_judging: '鎖定版本、開始評分',
   judge_submit: '評審送出評分', return_score: '退回評分', decide_tie: '同分處理', export_csv: '匯出 CSV', publish: '公布結果', revoke: '撤回公布',
-  ai_start: '開始 AI 評分', ai_score: 'AI 評分送出', ai_needs_review: 'AI 評分需要處理', ai_finalize: 'AI 評分補分',
+  ai_start: '開始 AI 評分', ai_score: 'AI 評分送出', ai_needs_review: 'AI 評分需要處理', ai_finalize: 'AI 評分補分', ai_draft: 'AI 評分暫存', ai_adopt: '採用 AI 評分',
 };
 /** 席位名稱（後台才標示 AI；公開頁只有編號） */
 const seatLabel = (n, aiSlot) => `評審${n}${n === aiSlot ? '（AI）' : ''}`;
@@ -372,7 +372,8 @@ function downloadCsv(filename, csv) {
 
 /* ───────────── AI 評分（P7） ───────────── */
 const AI = { data: null, running: new Set(), all: false, stop: false };
-const AI_CHIP = { uploading: 'info', processing: 'info', generating: 'info', finishing: 'info', done: 'ok', needs_review: 'warn', finalized: 'ok', failed: 'bad' };
+const AI_CHIP = { uploading: 'info', processing: 'info', generating: 'info', finishing: 'info', done: 'ok', needs_review: 'warn', finalized: 'ok', failed: 'bad', draft: 'info' };
+const aiDraftTotal = run => run && run.status === 'draft' && run.result ? Object.values(run.result.items).reduce((a, b) => a + (b || 0), 0) : null;
 const aiActive = run => run && ['uploading', 'processing', 'generating', 'finishing'].includes(run.status);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -397,17 +398,18 @@ function drawAi() {
     : !d.configured ? '<div class="notice bad">伺服器還沒有設定 <span class="mono">GEMINI_API_KEY</span>，不能執行 AI 評分。請見部署說明。</div>'
     : ['setup', 'collecting'].includes(d.phase) ? '<div class="notice">開始評分（鎖定版本）之後才能執行 AI 評分。</div>'
     : !d.canRun ? `<div class="notice">目前是「${esc(d.phaseLabel)}」階段，不能再執行 AI 評分。</div>` : '';
-  const todo = d.rows.filter(r => r.score.status !== 'submitted' && !aiActive(r.run) && !(r.run && r.run.status === 'needs_review'));
+  const todo = d.rows.filter(r => r.score.status !== 'submitted' && !aiActive(r.run) && !(r.run && ['needs_review', 'draft'].includes(r.run.status)));
+  const drafts = d.rows.filter(r => r.run && r.run.status === 'draft');
   main.innerHTML = `
   <div class="card stack">
     <div class="row" style="justify-content:space-between"><h2 style="margin:0">AI 評分${d.aiSlot ? `（評審${d.aiSlot}）` : ''}</h2>
-      <div class="row">${d.canImport ? '<button class="btn primary" data-act="ai-import">匯入 AI 評分檔…</button>' : ''}${d.canRun ? (AI.all ? '<button class="btn" data-act="ai-stop">停止全部執行</button>'
+      <div class="row">${d.canImport && drafts.length ? `<button class="btn primary" data-act="ai-adopt-all">全部採用（${drafts.length} 件暫存）</button>` : ''}${d.canImport ? `<button class="btn ${drafts.length ? '' : 'primary'}" data-act="ai-import">匯入 AI 評分檔…</button>` : ''}${d.canRun ? (AI.all ? '<button class="btn" data-act="ai-stop">停止全部執行</button>'
         : `<button class="btn primary" data-act="ai-all" ${todo.length ? '' : 'disabled'}>全部執行（${todo.length} 件未評）</button>`) : ''}</div></div>
     ${head}
     <p class="muted small" style="margin:0">AI 看鎖定版本的影片，依評分表四項給分並寫評語；結果驗證通過就自動送出，算成一位評審。
       有項目判斷不了或格式不對時標成「需要處理」，可以重跑，或由主辦人員補分並寫理由。${d.model ? `模型：<span class="mono">${esc(d.model)}</span>。` : ''}
       AI 在 Google 背景評分，一件大約 1～5 分鐘；這個頁面每 5 秒查一次結果。中途關掉頁面也沒關係，回到這個分頁會接著查。<br>
-      <b>匯入檔案：</b>用外部 AI（例如 Gemini 網頁版）評完，每組存成一個 JSON 檔（檔名含組別，例如 team01.json），按「匯入 AI 評分檔」一次選多個，確認分數後送出；伺服器用同樣的規則驗證，通過就算成一位評審。格式見 tools/README.md。<br>
+      <b>匯入檔案：</b>用外部 AI（例如 Gemini 網頁版）評完，每組存成一個 JSON 檔（檔名含組別，例如 team01.json），按「匯入 AI 評分檔」一次選多個。可以先「暫存」（只看、不計入平均），看過再按「採用」才算成一位評審；也可以直接送出。格式見 tools/README.md。<br>
       在這裡執行常失敗時，可以改在主辦方電腦上執行 <span class="mono">node tools/ai_score.mjs --all</span>（沒有時間限制，結果一樣會出現在這裡；見 tools/README.md）。</p>
   </div>
   <div class="card">
@@ -417,7 +419,7 @@ function drawAi() {
         const run = r.run, going = AI.running.has(r.teamId) || aiActive(run);
         return `<tr>
         <td><b>${esc(r.code)}</b> ${esc(r.name)}<br><span class="muted small">${esc(r.workTitle)}・${fmtDur(r.duration)}</span></td>
-        <td>${chip(r.score.label, SCORE_CHIP[r.score.status])}${r.score.total !== null ? ` <b>${r.score.total}</b>` : ''}</td>
+        <td>${chip(r.score.label, SCORE_CHIP[r.score.status])}${r.score.total !== null ? ` <b>${r.score.total}</b>` : ''}${aiDraftTotal(r.run) !== null ? `<div class="small">暫存 <b>${aiDraftTotal(r.run)}</b>　<span class="muted">未計入平均</span></div>` : ''}</td>
         <td>${run ? `${chip(run.statusLabel, AI_CHIP[run.status])}${run.local ? ' <span class="chip">主辦方電腦</span>' : ''}${going ? ' <span class="muted small">…</span>' : ''}
           <div class="muted small">${fmtTime(run.startedAt)}${r.runCount > 1 ? `・共 ${r.runCount} 次` : ''}</div>
           ${run.error ? `<div class="small" style="color:var(--bad)">${esc(run.error)}</div>` : ''}
@@ -425,6 +427,7 @@ function drawAi() {
           ${run.status === 'needs_review' ? `<div class="small">${run.problems.map(esc).join('<br>')}</div>` : ''}` : '<span class="muted">—</span>'}</td>
         <td><div class="row">
           ${run && !going ? `<button class="btn small" data-act="ai-detail" data-id="${run.id}">詳情</button>` : ''}
+          ${d.canImport && run && run.status === 'draft' && !going ? `<button class="btn small primary" data-act="ai-adopt" data-id="${run.id}">採用</button>` : ''}
           ${d.canRun && run && run.status === 'needs_review' && !going ? `<button class="btn small primary" data-act="ai-fix" data-id="${run.id}">補分…</button>` : ''}
           ${d.canRun && !going ? (r.score.status === 'submitted'
             ? `<button class="btn small" data-act="ai-run" data-id="${r.teamId}" data-rerun="1">重新評分…</button>`
@@ -469,7 +472,7 @@ async function runAiOne(teamId, rerun, resumeRun) {
 }
 
 async function runAiAll() {
-  const ids = AI.data.rows.filter(r => r.score.status !== 'submitted' && !aiActive(r.run) && !(r.run && r.run.status === 'needs_review')).map(r => r.teamId);
+  const ids = AI.data.rows.filter(r => r.score.status !== 'submitted' && !aiActive(r.run) && !(r.run && ['needs_review', 'draft'].includes(r.run.status))).map(r => r.teamId);
   if (!(await confirmBox(`<h2>全部執行 AI 評分</h2><p>依序評 ${ids.length} 件還沒有 AI 評分的作品（每件約 1～5 分鐘，一件接一件）。「全部執行」要開著這個頁面才會繼續送出下一件。</p>`, '開始'))) return;
   AI.all = true; AI.stop = false;
   for (const id of ids) {
@@ -552,19 +555,41 @@ async function aiImportRun(files) {
     </tbody></table></div>
     <p class="muted small" style="margin:0">${ok.length ? `確認後 ${ok.length} 件會送出到評審${d.aiSlot}（AI）。伺服器還會再驗證分數範圍、時間點與評語字數，沒通過的會標成「需要處理」。` : '沒有可以匯入的檔案。'}</p>`;
   if (!ok.length) { await dialog(html, [{ label: '關閉', value: true, primary: true }]); return; }
-  if (!(await confirmBox(html, `匯入 ${ok.length} 件`))) return;
+  const mode = await dialog(html.replace(/<p class="muted small"[^>]*>.*<\/p>$/s, '')
+    + `<p class="small" style="margin:.6em 0 0"><b>暫存</b>：只存起來給您看，不計入平均；看過再按「採用」才算數。<br><b>直接送出</b>：馬上算成評審${d.aiSlot}（AI）的成績，計入平均。伺服器還會再驗證分數範圍、時間點與評語字數，沒通過的標成「需要處理」。</p>`,
+    [{ label: '取消', value: false }, { label: `直接送出 ${ok.length} 件`, value: 'submit' }, { label: `暫存 ${ok.length} 件（不計入平均）`, value: 'draft', primary: true }]);
+  if (!mode) return;
   const result = [];
   for (const x of ok) {
     try {
       const b = await call('adminAiLocalBegin', x.row.teamId, x.rerun, '人工匯入（檔案）');
-      const r = await call('adminAiLocalFinish', b.runId, { text: x.text, usage: {} });
-      result.push(r.status === 'done' ? `✓ ${x.code} 完成，總分 ${Object.values(r.result.items).reduce((s, v) => s + v, 0)}`
+      const r = await call('adminAiLocalFinish', b.runId, { text: x.text, usage: {}, draft: mode === 'draft' });
+      result.push(r.status === 'draft' ? `✓ ${x.code} 已暫存，合計 ${Object.values(r.result.items).reduce((s, v) => s + v, 0)}（尚未計入平均）`
+        : r.status === 'done' ? `✓ ${x.code} 完成，總分 ${Object.values(r.result.items).reduce((s, v) => s + v, 0)}`
         : r.status === 'needs_review' ? `△ ${x.code} 需要處理：${(r.problems || []).join('；')}` : `✗ ${x.code} 失敗：${r.error || r.status}`);
     } catch (e) { result.push(`✗ ${x.code} 失敗：${e.message}`); }
   }
   try { AI.data = await call('adminAiOverview'); } catch (e) { /* 忽略 */ }
   drawAi();
   await dialog(`<h2>匯入結果</h2><ul>${result.map(t => `<li>${esc(t)}</li>`).join('')}</ul>`, [{ label: '關閉', value: true, primary: true }]);
+}
+
+/** 採用暫存的 AI 評分：寫進 AI 評審席位，從這一刻起計入平均 */
+async function aiAdopt(ids) {
+  const rows = ids.map(id => AI.data.rows.find(r => r.run && r.run.id === id)).filter(Boolean);
+  if (!rows.length) return;
+  const replace = rows.filter(r => r.score.status === 'submitted');
+  if (!(await confirmBox(`<h2>採用暫存的 AI 評分</h2>
+    <p>${rows.length} 件：${rows.map(r => `${esc(r.code)}（${aiDraftTotal(r.run)} 分）`).join('、')}</p>
+    <p>採用後算成評審${AI.data.aiSlot}（AI）的正式成績，<b>計入平均</b>。${replace.length ? `其中 ${replace.map(r => esc(r.code)).join('、')} 已有 AI 評分，會被取代（舊分數留在更正歷程）。` : ''}</p>`, `採用 ${rows.length} 件`))) return;
+  const out = [];
+  for (const r of rows) {
+    try { const x = await call('adminAiAdopt', r.run.id); out.push(`✓ ${r.code} 已採用，總分 ${Object.values(x.result.items).reduce((s, v) => s + v, 0)}`); }
+    catch (e) { out.push(`✗ ${r.code}：${e.message}`); }
+  }
+  try { AI.data = await call('adminAiOverview'); } catch (e) { /* 忽略 */ }
+  drawAi();
+  await dialog(`<h2>採用結果</h2><ul>${out.map(t => `<li>${esc(t)}</li>`).join('')}</ul>`, [{ label: '關閉', value: true, primary: true }]);
 }
 
 async function aiFix(id) {
@@ -773,6 +798,8 @@ main.addEventListener('click', async e => {
       break;
     }
     case 'ai-import': aiImportPick(); break;
+    case 'ai-adopt': await aiAdopt([id]); break;
+    case 'ai-adopt-all': await aiAdopt(AI.data.rows.filter(r => r.run && r.run.status === 'draft').map(r => r.run.id)); break;
     case 'ai-all': await runAiAll(); break;
     case 'ai-stop': AI.stop = true; toast('目前這件完成後停止'); break;
     case 'ai-detail': await aiDetail(id); break;

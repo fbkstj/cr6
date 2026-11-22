@@ -158,7 +158,7 @@ if (!ov.enabled) { console.error('這個競賽沒有開啟 AI 評審'); process.
 if (!['judging', 'settling'].includes(ov.phase)) { console.error(`目前是「${ov.phaseLabel}」階段，只有評分或結算階段可以執行 AI 評分`); process.exit(1); }
 const active = r => r.run && ['uploading', 'processing', 'generating', 'finishing'].includes(r.run.status);
 let rows;
-if (opt.all) rows = ov.rows.filter(r => (opt.rerun || r.score.status !== 'submitted') && !active(r) && !(r.run && r.run.status === 'needs_review'));
+if (opt.all) rows = ov.rows.filter(r => (opt.rerun || r.score.status !== 'submitted') && !active(r) && !(r.run && ['needs_review', 'draft'].includes(r.run.status)));
 else {
   rows = opt.teams.map(code => ov.rows.find(r => r.code === code) || code);
   const missing = rows.filter(r => typeof r === 'string');

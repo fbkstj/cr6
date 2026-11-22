@@ -895,7 +895,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
 
   const AI_PROMPT_VERSION = 'v1';
   const AI_STATUS = { uploading: '上傳影片中', processing: 'Gemini 處理影片中', generating: 'AI 評分中', finishing: '寫入評分中', done: '已完成',
-    needs_review: '需要處理', finalized: '已補分完成', failed: '失敗' };
+    needs_review: '需要處理', finalized: '已補分完成', failed: '失敗', draft: '暫存（未計入）' };
   const AI_ACTIVE = ['uploading', 'processing', 'generating', 'finishing'];
   // 超過這個時間沒有進展就當作中斷（generating 從送出背景評分起算；背景評分本身不受 Edge Function 時間上限影響）
   const AI_STALE_MS = { uploading: 4 * 60 * 1000, starting: 2 * 60 * 1000, generating: 20 * 60 * 1000, finishing: 2 * 60 * 1000, local: 40 * 60 * 1000 };
@@ -1095,7 +1095,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     }
     needScoringPhase(c);
     if (!(await db.updateAiRun(r.id, { status: 'finishing', updated_at: iso(now()) }, 'generating'))) fail('這次 AI 評分正在寫入，請重新整理');
-    return completeRun(c, acc, r, str(input.text, 20000), usage);
+    return completeRun(c, acc, r, str(input.text, 20000), usage, !!input.draft);
   }
 
   /** 第 1 步：把鎖定版本的影片上傳到 Gemini。rerun＝已經有 AI 評分時重新評分 */
@@ -1188,7 +1188,8 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
   }
 
   /** 拿到 AI 的回應後（狀態已經是 finishing）：解析、驗證；全部通過就送出到 AI 席位，否則標成「需要處理」 */
-  async function completeRun(c, acc, r, text, usage) {
+  /** draft＝只驗證並存成「暫存」，不寫進評審席位、不計入平均；之後由主辦人員按「採用」才算數 */
+  async function completeRun(c, acc, r, text, usage, draft) {
     const t = await db.getTeam(r.team_id);
     const v = await db.getVersion(r.version_id);
     const rb = await rubricView(c);
@@ -1201,6 +1202,11 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
       await log(acc, 'ai_needs_review', t.code, { run: r.id, problems });
       return runView(await db.getAiRun(r.id));
     }
+    if (draft) {
+      await db.updateAiRun(r.id, { status: 'draft', finished_at: iso(now()), updated_at: iso(now()) });
+      await log(acc, 'ai_draft', t.code, { run: r.id, total: Object.values(result.items).reduce((a, b) => a + b, 0) });
+      return runView(await db.getAiRun(r.id));
+    }
     try {
       await applyAiScore(c, r, result.items, result.strengths, result.improvements, acc, '重新執行 AI 評分');
       await db.updateAiRun(r.id, { status: 'done', finished_at: iso(now()), updated_at: iso(now()) });
@@ -1208,6 +1214,30 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
       const msg = e instanceof UserError || (e && e.userMessage) ? e.message : '寫入評分失敗';
       await db.updateAiRun(r.id, { status: 'needs_review', problems: [msg], finished_at: iso(now()), updated_at: iso(now()) });
     }
+    return runView(await db.getAiRun(r.id));
+  }
+
+  /** 採用「暫存」的 AI 評分：寫進 AI 評審席位，從這一刻起才計入平均（已有送出的 AI 評分會被取代，舊的留在更正歷程） */
+  async function adminAiAdopt(token, runId) {
+    const acc = await auth(token, 'admin');
+    const c = await aiComp(acc);
+    needScoringPhase(c);
+    const r = await db.getAiRun(runId);
+    if (!r || r.competition_id !== c.id) fail('找不到這次 AI 評分');
+    if (r.status !== 'draft') fail('只有「暫存」的 AI 評分可以採用');
+    const latest = (await db.listAiRuns(c.id)).filter(x => x.team_id === r.team_id).sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)))[0];
+    if (latest && latest.id !== r.id) fail('這件作品已經有更新的 AI 評分紀錄，請重新整理');
+    if (!(await db.updateAiRun(r.id, { status: 'finishing', updated_at: iso(now()) }, 'draft'))) fail('這次 AI 評分正在寫入，請重新整理');
+    const res = r.result || { items: {} };
+    try {
+      await applyAiScore(c, r, res.items, res.strengths || '', res.improvements || '', acc, '採用暫存的 AI 評分');
+    } catch (e) {
+      await db.updateAiRun(r.id, { status: 'draft', updated_at: iso(now()) });
+      throw e;
+    }
+    await db.updateAiRun(r.id, { status: 'done', finished_at: iso(now()), updated_at: iso(now()) });
+    const t = await db.getTeam(r.team_id);
+    await log(acc, 'ai_adopt', t.code, { run: r.id, total: Object.values(res.items).reduce((a, b) => a + b, 0) });
     return runView(await db.getAiRun(r.id));
   }
 
@@ -1313,7 +1343,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     judgeListWorks, judgeGetWork, judgeSaveDraft, judgeSubmit,
     adminListScores, adminGetScore, adminReturnScore,
     adminRanking, adminDecideTie, adminExportCsv, adminPublish, adminRevoke,
-    adminAiOverview, adminAiGetRun, adminAiStart, adminAiStep, adminAiFinalize, adminAiLocalBegin, adminAiLocalFinish,
+    adminAiOverview, adminAiGetRun, adminAiStart, adminAiStep, adminAiFinalize, adminAiAdopt, adminAiLocalBegin, adminAiLocalFinish,
     publicStatus, publicResults,
   };
 
