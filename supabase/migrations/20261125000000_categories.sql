@@ -46,16 +46,16 @@ begin
   insert into competitions (name, active, judge_count) values (p_name, true, p_judge_count) returning id into cid;
   insert into rubrics (competition_id, name) values (cid, '預設評分表') returning id into rid;
   insert into rubric_items (rubric_id, sort, title, max_score, description) values
-    (rid, 1, '應用及整合性', 40, ''),
-    (rid, 2, '主題與課程相關性', 25, ''),
-    (rid, 3, '創意性', 25, ''),
-    (rid, 4, '內文組織及架構格式', 10, '依 115 年初賽評分表');
+    (rid, 1, '應用及整合性', 40, '軟硬體或系統整合度、實際運作展示與問題解決能力。'),
+    (rid, 2, '主題與課程相關性', 25, '作品是否運用相關專業課程知識或技術原理。'),
+    (rid, 3, '創意性', 25, '構想新穎度、互動巧思或差異化設計。'),
+    (rid, 4, '內文組織及架構格式', 10, '簡報結構、解說邏輯、畫面與呈現清楚度。');
   insert into rubrics (competition_id, name, category) values (cid, '創意組評分表', 'creative') returning id into rid2;
   insert into rubric_items (rubric_id, sort, title, max_score, description) values
-    (rid2, 1, '獨創性', 40, '依 115 年初賽評分表'),
-    (rid2, 2, '實用性', 25, '依 115 年初賽評分表'),
-    (rid2, 3, '商品化程度', 25, '依 115 年初賽評分表'),
-    (rid2, 4, '內文組織及架構格式', 10, '依 115 年初賽評分表');
+    (rid2, 1, '獨創性', 40, '依 115 年初賽評分表，構想原創度與突破性。'),
+    (rid2, 2, '實用性', 25, '依 115 年初賽評分表，切合生活痛點、操作可行性與實際效果。'),
+    (rid2, 3, '商品化程度', 25, '依 115 年初賽評分表，外觀完整度、穩定性與落地量產潛力。'),
+    (rid2, 4, '內文組織及架構格式', 10, '依 115 年初賽評分表，簡報結構、表達流暢度與呈現品質。');
   update competitions set rubric_id = rid, rubric_id_creative = rid2 where id = cid;
   insert into accounts (competition_id, login_id, display_name, role) values (cid, p_admin_login, p_admin_name, 'admin');
   perform set_password(p_admin_login, p_admin_pw);
