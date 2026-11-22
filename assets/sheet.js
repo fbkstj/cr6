@@ -125,12 +125,23 @@ export async function downloadPdf(sheets, filename) {
   document.body.appendChild(host);
   document.body.appendChild(cover);
   window.scrollTo(0, 0);
-  // 標示 data-fit 的成績總表要放進同一張 A4：內容太多就逐步縮小字體，直到高度放得進一頁
+  // 標示 data-fit 的成績總表固定放進同一張 A4 橫式：先逐步縮小字體；還是太高就整張等比例縮小，保證只有一頁
+  const FIT_H = 690;   // A4 橫式扣掉邊界後，寬 1040px 時能放的高度（約 727px，留一點餘裕）
   box.querySelectorAll('.sheet[data-fit]').forEach(sh => {
     const tbl = sh.querySelector('.sheet-table');
-    for (let fs = 15; fs > 6 && sh.offsetHeight > 690; fs -= 0.5) {
+    for (let fs = 15; fs >= 8 && sh.offsetHeight > FIT_H; fs -= 0.5) {
       tbl.style.fontSize = fs + 'px';
-      sh.querySelectorAll('.c-comment').forEach(c => { c.style.fontSize = Math.max(6, fs - 2) + 'px'; });
+      sh.querySelectorAll('.c-comment').forEach(c => { c.style.fontSize = Math.max(7, fs - 2) + 'px'; });
+    }
+    const h = sh.offsetHeight;
+    if (h > FIT_H) {
+      const k = FIT_H / h;
+      const wrap = document.createElement('div');
+      wrap.style.cssText = `width:1040px;height:${FIT_H}px;overflow:hidden;margin:0 auto`;
+      sh.parentNode.insertBefore(wrap, sh);
+      wrap.appendChild(sh);
+      sh.style.cssText += `;transform:scale(${k});transform-origin:top left;width:1040px`;
+      wrap.style.width = Math.round(1040 * k) + 'px';
     }
   });
   try {

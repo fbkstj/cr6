@@ -1,7 +1,7 @@
 // 主辦方後台（P3：總覽、作品與影片、評審與帳號、評分表、競賽設定、操作紀錄）
 import { call, requireRole, logout, esc, fmtTime, fmtDur, fmtSec, fmtSize, toLocalInput, fromLocalInput,
   toast, dialog, dialogValues, confirmBox, busy, devBanner } from './app.js';
-import { fromRanking, mountSheetPanel } from './sheet.js?v=20261122c';
+import { fromRanking, mountSheetPanel } from './sheet.js?v=20261122d';
 import { splitAiJson } from './aifile.js';
 
 const $ = s => document.querySelector(s);
