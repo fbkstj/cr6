@@ -45,28 +45,31 @@ function numbered(cat) {
   return cat.teams.slice().sort((a, b) => a.code.localeCompare(b.code)).map((t, i) => Object.assign({ no: (PREFIX[cat.category] || '') + (i + 1) }, t));
 }
 
-function sheetHtml(title, head, body, note) {
-  return `<section class="sheet"><h1 class="sheet-title">${esc(title)}</h1>
-    <table class="sheet-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
+function sheetHtml(title, head, body, note, fit) {
+  return `<section class="sheet"${fit ? ' data-fit="1"' : ''}><h1 class="sheet-title">${esc(title)}</h1>
+    <table class="sheet-table${fit ? ' sheet-sum' : ''}"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
     ${note ? `<p class="sheet-note">${note}</p>` : ''}</section>`;
 }
 
-/** 某一組別的「平均」成績表：名次、各項平均、總分（平均）、各評審總分 */
+/** 某一組別的「成績總表」：一張 A4 橫式放得下整個組別——名次、各項平均、總分（平均）、各評審總分、各評審的評語與建議 */
 function averageSheet(data, cat) {
   const items = cat.items;
   const N = data.judgeCount || 0;
+  const nl = x => esc(x).replace(/\n/g, '<br>');
   const head = th('編號', 'c-no') + th('題目', 'c-title') + th('名次', 'c-rank')
     + (items ? items.map(i => th(itemHead(i), 'c-item')).join('') : '')
-    + th('總分<br>(平均)', 'c-total') + Array.from({ length: N }, (_, k) => th('評審' + (k + 1), 'c-j')).join('');
+    + th('總分<br>(平均)', 'c-total') + Array.from({ length: N }, (_, k) => th('評審' + (k + 1), 'c-j')).join('') + th('評語及建議', 'c-comment');
   const body = numbered(cat).sort((a, b) => (a.rank || 999) - (b.rank || 999) || a.no.localeCompare(b.no, 'zh', { numeric: true })).map(t => {
     const itemCells = items ? items.map(i => {
       const v = t.judges.map(j => j.items && j.items[i.id]).filter(x => typeof x === 'number');
       return `<td class="num">${v.length ? fmt(v.reduce((a, b) => a + b, 0) / v.length) : ''}</td>`;
     }).join('') : '';
+    const comments = t.judges.slice().sort((a, b) => a.slot - b.slot).filter(j => j.strengths || j.improvements).map(j =>
+      `<div class="cm"><b>評審${esc(j.slot)}</b>${j.strengths ? `　優點：${nl(j.strengths)}` : ''}${j.improvements ? `　建議：${nl(j.improvements)}` : ''}</div>`).join('');
     return `<tr><td class="c-no">${esc(t.no)}</td><td>${titleCell(t)}</td><td class="num">${t.rank ? esc(t.rank) + (t.tied ? '<br><small>(並列)</small>' : '') : ''}</td>${itemCells}
-      <td class="num"><b>${fmt(t.average)}</b></td>${Array.from({ length: N }, (_, k) => { const j = t.judges.find(x => x.slot === k + 1); return `<td class="num">${j ? esc(j.total) : ''}</td>`; }).join('')}</tr>`;
+      <td class="num"><b>${fmt(t.average)}</b></td>${Array.from({ length: N }, (_, k) => { const j = t.judges.find(x => x.slot === k + 1); return `<td class="num">${j ? esc(j.total) : ''}</td>`; }).join('')}<td class="c-comment">${comments}</td></tr>`;
   }).join('');
-  return { key: cat.category + '-avg', label: `${cat.label}｜平均`, html: sheetHtml(`${data.name}評分表(${cat.label})　成績總表`, head, body, '總分為各評審總分的平均；名次為本組別內的名次。') };
+  return { key: cat.category + '-avg', label: `${cat.label}｜成績總表`, summary: true, html: sheetHtml(`${data.name}評分表(${cat.label})　成績總表`, head, body, '總分為各評審總分的平均；名次為本組別內的名次。', true) };
 }
 
 /** 某一組別、某一位評審的成績表（和 Word 檔一樣：編號、題目、各項分數、總分、評語；另有建議欄） */
@@ -122,6 +125,14 @@ export async function downloadPdf(sheets, filename) {
   document.body.appendChild(host);
   document.body.appendChild(cover);
   window.scrollTo(0, 0);
+  // 標示 data-fit 的成績總表要放進同一張 A4：內容太多就逐步縮小字體，直到高度放得進一頁
+  box.querySelectorAll('.sheet[data-fit]').forEach(sh => {
+    const tbl = sh.querySelector('.sheet-table');
+    for (let fs = 15; fs > 6 && sh.offsetHeight > 690; fs -= 0.5) {
+      tbl.style.fontSize = fs + 'px';
+      sh.querySelectorAll('.c-comment').forEach(c => { c.style.fontSize = Math.max(6, fs - 2) + 'px'; });
+    }
+  });
   try {
     if (document.fonts && document.fonts.ready) await document.fonts.ready;
     await window.html2pdf().set({
@@ -137,14 +148,15 @@ export async function downloadPdf(sheets, filename) {
 /** 在 container 放上「成績表」面板：選擇要看的表、網頁預覽、下載 PDF */
 export function mountSheetPanel(container, data, { onError = () => {} } = {}) {
   const sheets = buildSheets(data);
+  const summaries = sheets.filter(x => x.summary);
   if (!sheets.length) { container.innerHTML = ''; return; }
   let cur = 0;
   const safe = s => s.replace(/[\\/:*?"<>|]/g, '');
   const draw = () => {
     container.innerHTML = `<div class="card stack">
       <div class="row" style="justify-content:space-between"><h2 style="margin:0">成績表（評分表格式）</h2>
-        <div class="row"><button class="btn" data-sheet="one">下載這一張 PDF</button><button class="btn primary" data-sheet="all">下載全部 PDF（${sheets.length} 張）</button></div></div>
-      <p class="muted small" style="margin:0">版面比照初賽評分表：A4 橫式，編號、題目、各項分數、總分、評語。每個組別一張「平均」總表，另有每位評審各一張。評審只顯示編號，不顯示姓名。</p>
+        <div class="row"><button class="btn" data-sheet="one">下載這一張 PDF</button><button class="btn primary" data-sheet="all">下載成績總表 PDF（${summaries.length} 組別各一張，共 ${summaries.length} 頁）</button></div></div>
+      <p class="muted small" style="margin:0">版面比照初賽評分表：A4 橫式。「下載成績總表 PDF」＝每個組別一張（含名次、各項平均、各評審總分、評語及建議）；另有每位評審各一張，可以在下方選擇後單張下載。評審只顯示編號，不顯示姓名。</p>
       <div class="row sheet-tabs">${sheets.map((s, i) => `<button class="chip ${i === cur ? 'accent' : ''}" data-sheet-i="${i}" type="button">${esc(s.label)}</button>`).join('')}</div>
       <div class="sheet-scroll">${sheets[cur].html}</div>
     </div>`;
@@ -156,7 +168,7 @@ export function mountSheetPanel(container, data, { onError = () => {} } = {}) {
     if (!b.dataset.sheet) return;
     const all = b.dataset.sheet === 'all';
     const old = b.textContent; b.disabled = true; b.textContent = '產生 PDF 中…';
-    try { await downloadPdf(all ? sheets : [sheets[cur]], safe(`${data.name}_成績表${all ? '' : '_' + sheets[cur].label.replace('｜', '_')}`) + '.pdf'); }
+    try { await downloadPdf(all ? summaries : [sheets[cur]], safe(`${data.name}_成績表${all ? '' : '_' + sheets[cur].label.replace('｜', '_')}`) + '.pdf'); }
     catch (err) { onError(err); }
     finally { b.disabled = false; b.textContent = old; }
   };

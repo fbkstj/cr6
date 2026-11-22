@@ -150,6 +150,12 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 .sheet-table td.num { text-align: center; }
 .sheet-table tr.tall td { height: 96px; }
 .sheet-table .c-comment { font-size: 13px; line-height: 1.45; }
+.sheet-sum th, .sheet-sum td { padding: 3px 4px; }
+.sheet-sum .c-no { width: 36px; } .sheet-sum .c-title { width: 100px; } .sheet-sum .c-rank { width: 40px; }
+.sheet-sum .c-item { width: 62px; } .sheet-sum .c-total { width: 50px; } .sheet-sum .c-j { width: 38px; }
+.sheet-sum th { font-size: 12px; }
+.sheet-sum .c-comment { width: auto; }
+.sheet-table .cm { margin-bottom: 3px; }
 .sheet-note { font-size: 13px; margin: 6px 0 0; color: #000; }
 .sheet-pdf-root { position: absolute; left: 0; top: 0; width: 1040px; background: #fff; z-index: 0; }   /* 不能用 fixed 或負的 z-index：轉出來會是空白頁 */
 .sheet-pdf-box { width: 1040px; background: #fff; }
