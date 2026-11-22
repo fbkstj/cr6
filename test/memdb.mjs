@@ -15,7 +15,7 @@ export function createMemDb() {
     team_current: [], reviews: [], judging_locks: [], scores: [], score_history: [], tie_decisions: [], login_fails: [], admin_logs: [], publications: [],
     ai_runs: [],
   };
-  const seats = c => c.judge_count + (c.ai_judge ? 1 : 0);   // 同 SQL seat_count
+  const seats = c => c.judge_count + (c.ai_judge && c.ai_counted !== false ? 1 : 0);   // 同 SQL seat_count
   const clone = v => (v === undefined ? undefined : structuredClone(v));
   const strip = a => { if (!a) return null; const { password_hash, ...rest } = a; return Object.assign(clone(rest), { has_password: !!password_hash }); };
   const nowIso = () => new Date().toISOString();
@@ -148,7 +148,7 @@ export function createMemDb() {
       if (c.ai_judge) {   // AI 評審：建立系統帳號（沒有密碼）並坐席位 N＋1
         let ai = t.accounts.find(a => a.competition_id === cid && a.role === 'ai');
         if (!ai) {
-          ai = { id: crypto.randomUUID(), competition_id: cid, login_id: 'ai-' + cid.replace(/-/g, '').slice(0, 8), display_name: 'AI 評審（Gemini）', role: 'ai', active: true, password_hash: null, created_at: nowIso() };
+          ai = { id: crypto.randomUUID(), competition_id: cid, login_id: 'ai-' + cid.replace(/-/g, '').slice(0, 8), display_name: 'AI 評審', role: 'ai', active: true, password_hash: null, created_at: nowIso() };
           t.accounts.push(ai);
         }
         ai.active = true;
@@ -296,13 +296,13 @@ export function createMemDb() {
   /** 測試資料：等同 SQL 的 create_competition＋5 位評審＋3 個組別（全部是合成資料） */
   db.seedDemo = async ({ judgeCount = 5, teams = 3, aiJudge = false, creative = [] } = {}) => {   // creative：屬於創意組的組別代碼，例如 ['team03']
     const cid = crypto.randomUUID(), rid = crypto.randomUUID(), rid2 = crypto.randomUUID();
-    t.competitions.push({ id: cid, name: '測試競賽（合成資料）', active: true, phase: 'setup', judge_count: judgeCount, ai_judge: aiJudge, rubric_id: rid, rubric_id_creative: rid2,
+    t.competitions.push({ id: cid, name: '測試競賽（合成資料）', active: true, phase: 'setup', judge_count: judgeCount, ai_judge: aiJudge, ai_counted: true, rubric_id: rid, rubric_id_creative: rid2,
       show_status_page: true, show_item_scores: false, min_comment_chars: 10 });
     t.rubrics.push({ id: rid, competition_id: cid, name: '預設評分表', category: 'project', version: 1, locked: false });
     t.rubrics.push({ id: rid2, competition_id: cid, name: '創意組評分表', category: 'creative', version: 1, locked: false });
     [['專題作品的應用及整合性', 40], ['專題作品與課程相關', 25], ['創意性與實用性', 25], ['作品說明的組織與表達', 10]]
       .forEach(([title, max], k) => t.rubric_items.push({ id: crypto.randomUUID(), rubric_id: rid, sort: k + 1, title, max_score: max, description: '' }));
-    [['創意設計', 30], ['實用商用', 30], ['實作成效', 30], ['作品說明的組織與表達', 10]]
+    [['獨創性', 40], ['實用性', 25], ['商品化程度', 25], ['內文組織及架構格式', 10]]
       .forEach(([title, max], k) => t.rubric_items.push({ id: crypto.randomUUID(), rubric_id: rid2, sort: k + 1, title, max_score: max, description: '' }));
     await db.insertAccount({ competition_id: cid, login_id: 'admin01', display_name: '主辦人員', role: 'admin', active: true });
     await db.setPassword('admin01', 'admin-pass-01');

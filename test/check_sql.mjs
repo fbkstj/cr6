@@ -52,7 +52,10 @@ await db.query(`update accounts set active=false where login_id='admin01'`);
 (await db.query(`select check_password('admin01','password123') id`)).rows[0].id === null ? ok('停用的帳號無法登入') : bad('停用帳號', '仍可登入');
 await db.query(`update accounts set active=true where login_id='admin01'`);
 
-await expectFail('評審人數只能 3 或 5', `insert into competitions(name, judge_count) values('x', 4)`);
+await expectFail('評審人數只能 1、3 或 5', `insert into competitions(name, judge_count) values('x', 4)`);
+await db.query(`insert into competitions(name, judge_count, active) values('one', 1, false)`);
+(await db.query(`select count(*)::int n from competitions where judge_count = 1`)).rows[0].n === 1 ? ok('評審人數 1 位可以建立') : bad('評審 1 位', '');
+await db.query(`delete from competitions where name='one'`);
 await expectFail('只能有一個 active 競賽', `insert into competitions(name, active) values('x', true)`);
 await expectFail('帳號格式錯誤被拒', `insert into accounts(competition_id, login_id, display_name, role) values($1,'Judge 01','x','judge')`, [cid]);
 await expectFail('login_id 全系統唯一', `insert into accounts(competition_id, login_id, display_name, role) values($1,'admin01','x','admin')`, [cid]);
@@ -229,6 +232,11 @@ const scA = (a, b, c2, d) => JSON.stringify({ [riA[0].id]: a, [riA[1].id]: b, [r
 for (const jid of ja) await db.query(`select judge_save($1,$2,$3::jsonb,$4,$4,true)`, [tA, jid, scA(30, 20, 20, 10), okText]);
 await db.query(`update competitions set phase='settling' where id=$1`, [cidA]);
 await expectFail('只有 3 位老師的評分（缺 AI）不能公布', `select publish_results($1,$2,$3::jsonb)`, [cidA, adminA, snap], /還有 1 件作品的評分沒有收齊/);
+const seatOf = async () => (await db.query(`select seat_count(c) n from competitions c where id=$1`, [cidA])).rows[0].n;
+await db.query(`update competitions set ai_counted=false where id=$1`, [cidA]);
+const nOff = await seatOf();
+await db.query(`update competitions set ai_counted=true where id=$1`, [cidA]);
+nOff === 3 && (await seatOf()) === 4 ? ok('ai_counted 決定 AI 是否計入總份數（不計入＝3，計入＝4）') : bad('ai_counted', String(nOff));
 await db.query(`update competitions set phase='judging' where id=$1`, [cidA]);
 const aiSave = (await db.query(`select judge_save($1,$2,$3::jsonb,$4,$4,true) r`, [tA, aiAcc.id, scA(31, 20, 18, 8), okText])).rows[0].r;
 aiSave.status === 'submitted' && aiSave.total === 77 ? ok('AI 帳號用 judge_save 送出到席位 4') : bad('AI 送出', JSON.stringify(aiSave));

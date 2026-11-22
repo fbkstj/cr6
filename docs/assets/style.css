@@ -134,3 +134,28 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 /* 登入頁 */
 .center { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
 .login { width: min(100%, 380px); }
+
+/* ── 成績表（復刻初賽評分表：A4 橫式表格） ── */
+.sheet-tabs { gap: 6px; }
+.sheet-tabs .chip { cursor: pointer; border: 1px solid var(--line); background: var(--surface); font: inherit; }
+.sheet-scroll { overflow-x: auto; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.sheet, .sheet-pdf-root .sheet { width: 1040px; max-width: none; margin: 0 auto; background: #fff; color: #000; padding: 6px 0 10px;
+  font-family: "PMingLiU", "MingLiU", "Noto Serif TC", "Songti TC", serif; }
+.sheet-title { font-size: 22px; font-weight: 700; text-align: center; margin: 4px 0 18px; color: #000; }
+.sheet-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 15px; line-height: 1.5; }
+.sheet-table th, .sheet-table td { border: 1px solid #444; padding: 4px 6px; vertical-align: top; text-align: left; color: #000; background: #fff; word-break: break-word; }
+.sheet-table th { font-weight: 400; }
+.sheet-table .c-no { width: 44px; } .sheet-table .c-title { width: 150px; } .sheet-table .c-rank { width: 54px; }
+.sheet-table .c-total { width: 62px; } .sheet-table .c-j { width: 58px; } .sheet-table .c-item { width: 96px; }
+.sheet-table td.num { text-align: center; }
+.sheet-table tr.tall td { height: 78px; }
+.sheet-table .c-comment { font-size: 13px; line-height: 1.45; }
+.sheet-note { font-size: 13px; margin: 6px 0 0; color: #000; }
+.sheet-pdf-root { position: fixed; left: 0; top: 0; z-index: -1; background: #fff; }
+.sheet-pdf-root .sheet + .sheet { page-break-before: always; }
+@media print { .sheet-scroll { border: 0; padding: 0; } }
+@page { size: A4 landscape; margin: 8mm 10mm; }
+.print-all { background: #fff; }
+.print-all .sheet { width: 100%; padding: 0; page-break-after: always; break-after: page; }
+.print-all .sheet:last-child { page-break-after: auto; break-after: auto; }
+.print-all .sheet-table tr { break-inside: avoid; }

@@ -3,13 +3,9 @@
 // GET 只回 alive，給測試用。
 import { createApi } from './core.js';
 import { createDb } from './db_supabase.js';
-import { createGemini } from './gemini.js';
 
 const db = createDb(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-// AI 評審：有設定 GEMINI_API_KEY 才啟用；模型可用 GEMINI_MODEL 指定
-const geminiKey = Deno.env.get('GEMINI_API_KEY') || '';
-const gemini = geminiKey ? createGemini({ apiKey: geminiKey, model: Deno.env.get('GEMINI_MODEL') || 'gemini-3.8-flash' }) : null;
-const api = createApi({ db, secret: Deno.env.get('TOKEN_SECRET') || '', siteBaseUrl: Deno.env.get('SITE_BASE_URL') || '', gemini });
+const api = createApi({ db, secret: Deno.env.get('TOKEN_SECRET') || '', siteBaseUrl: Deno.env.get('SITE_BASE_URL') || '' });
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',

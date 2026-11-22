@@ -12,6 +12,7 @@
 <main id="main"><p class="muted">載入中…</p></main>
 <script type="module">
 import { api, esc, fmtTime, devBanner } from './assets/app.js';
+import { fromPublic, mountSheetPanel, buildSheets } from './assets/sheet.js';
 devBanner();
 const main = document.getElementById('main');
 const CHIP = { '未收件': '', '已收件': 'info', '審查中': 'warn', '資格通過': 'ok', '補件中': 'warn', '未通過': 'bad', '未進入評分': 'bad', '評分中': 'accent', '已公布': 'ok' };
@@ -41,7 +42,11 @@ try {
       ${res.categories.map(cat => {
         const ts = res.teams.filter(t => t.category === cat.category).sort((a, b) => (a.rank || 999) - (b.rank || 999));
         return ts.length ? `<h2 style="margin:24px 0 8px">${esc(cat.label)}</h2>${ts.map(t => card(t, cat.items)).join('')}` : '';
-      }).join('')}`;
+      }).join('')}
+      <div id="sheet-panel"></div>`;
+    mountSheetPanel(document.getElementById('sheet-panel'), fromPublic(res), { onError: e => alert(e.message) });
+    // 網址加 #print：只留全部成績表（一張一頁），給瀏覽器「列印→另存 PDF」用
+    if (location.hash === '#print') { document.body.className = 'print-all'; document.body.innerHTML = buildSheets(fromPublic(res)).map(s => s.html).join(''); }
   } else {
     const st = await api('publicStatus');
     if (!st.competition) { main.innerHTML = '<div class="card muted">目前沒有進行中的競賽。</div>'; }

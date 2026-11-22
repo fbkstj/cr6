@@ -52,10 +52,10 @@ begin
     (rid, 4, '作品說明的組織與表達', 10, '試辦項目，名稱與判準待校方定案');
   insert into rubrics (competition_id, name, category) values (cid, '創意組評分表', 'creative') returning id into rid2;
   insert into rubric_items (rubric_id, sort, title, max_score, description) values
-    (rid2, 1, '創意設計', 30, '預設值，名稱與配分待校方定案'),
-    (rid2, 2, '實用商用', 30, '預設值，名稱與配分待校方定案'),
-    (rid2, 3, '實作成效', 30, '預設值，名稱與配分待校方定案'),
-    (rid2, 4, '作品說明的組織與表達', 10, '預設值，名稱與配分待校方定案');
+    (rid2, 1, '獨創性', 40, '依 115 年初賽評分表'),
+    (rid2, 2, '實用性', 25, '依 115 年初賽評分表'),
+    (rid2, 3, '商品化程度', 25, '依 115 年初賽評分表'),
+    (rid2, 4, '內文組織及架構格式', 10, '依 115 年初賽評分表');
   update competitions set rubric_id = rid, rubric_id_creative = rid2 where id = cid;
   insert into accounts (competition_id, login_id, display_name, role) values (cid, p_admin_login, p_admin_name, 'admin');
   perform set_password(p_admin_login, p_admin_pw);
@@ -104,7 +104,7 @@ begin
     select id into ai from accounts where competition_id = p_competition and role = 'ai' limit 1;
     if ai is null then
       insert into accounts (competition_id, login_id, display_name, role)
-        values (p_competition, 'ai-' || substr(replace(p_competition::text, '-', ''), 1, 8), 'AI 評審（Gemini）', 'ai')
+        values (p_competition, 'ai-' || substr(replace(p_competition::text, '-', ''), 1, 8), 'AI 評審', 'ai')
         returning id into ai;
     end if;
     update accounts set active = true where id = ai;

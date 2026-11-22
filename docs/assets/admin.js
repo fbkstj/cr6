@@ -1,6 +1,7 @@
 // 主辦方後台（P3：總覽、作品與審查、評審與帳號、評分表、競賽設定、操作紀錄）
 import { call, requireRole, logout, esc, fmtTime, fmtDur, fmtSec, fmtSize, toLocalInput, fromLocalInput,
   toast, dialog, dialogValues, confirmBox, busy, devBanner } from './app.js';
+import { fromRanking, mountSheetPanel } from './sheet.js';
 
 const $ = s => document.querySelector(s);
 const main = $('#main');
@@ -95,7 +96,7 @@ function viewOverview() {
   <div class="card stack">
     <h2>評審席位</h2>
     <p class="muted small" style="margin:0">老師評審：${c.judgeCount} 人。${teacherSlots().length < c.judgeCount ? `<span class="chip warn">還差 ${c.judgeCount - teacherSlots().length} 位</span>` : chip('已排滿', 'ok')}
-      ${c.aiJudge ? `　AI 評審：評審${c.aiSlot}（${c.aiConfigured ? chip('已設定金鑰', 'ok') : chip('伺服器還沒有設定 GEMINI_API_KEY', 'bad')}）。每件作品要收齊 ${c.seats} 份評分。` : '　沒有 AI 評審。'}</p>
+      ${c.aiJudge ? `　AI 評審：評審${c.aiSlot}（外部 AI 評完後匯入）。每件作品要收齊 ${c.seats} 份評分。` : '　沒有 AI 評審。'}</p>
   </div>`;
 }
 
@@ -252,7 +253,7 @@ function viewScores() {
       <div class="stats">${r.judges.map(j => `<div class="stat"><span class="muted small">${seatLabel(j.slot, r.aiSlot)}・${esc(j.name || '未指派')}</span><b>${j.done} / ${r.totalWorks}</b></div>`).join('')}</div>
     </div>
     <div class="card stack">
-      <p class="muted small" style="margin:0">點有分數的格子可以查看內容、更正歷程，或退回給評審修改。每件作品要收齊 ${r.judgeCount} 份「已送出」才會計算平均。</p>
+      <p class="muted small" style="margin:0">點有分數的格子可以查看內容、更正歷程，或退回給評審修改。每件作品要收齊 ${r.needed} 份「已送出」才會計算平均${r.aiSlot && !r.aiCounted ? '（AI 評審的分數目前設為不計入平均，只當參考）' : ''}。</p>
       <div class="table-wrap"><table>
         <thead><tr><th>作品</th>${r.judges.map(j => `<th>${seatLabel(j.slot, r.aiSlot)}</th>`).join('')}<th>收齊</th></tr></thead>
         <tbody>${r.rows.map(row => `<tr>
@@ -260,7 +261,7 @@ function viewScores() {
           ${row.cells.map(c => `<td>${c.scoreId ? `<a href="#" data-act="score" data-id="${c.scoreId}">` : ''}<span class="chip ${SCORE_CHIP[c.status]}">${esc(c.label)}</span>${c.total !== null ? ` <b>${c.total}</b>` : ''}${c.scoreId ? '</a>' : ''}
             ${c.draft ? `<div class="small"><span class="chip info">暫存</span> <b>${c.draft.total}</b> <span class="muted">未計入平均</span></div>` : ''}
             ${c.judge ? `<div class="muted small">${esc(c.judge)}</div>` : ''}</td>`).join('')}
-          <td>${row.complete ? '<span class="chip ok">✓</span>' : `<span class="muted">${row.submitted} / ${r.judgeCount}</span>`}</td>
+          <td>${row.complete ? '<span class="chip ok">✓</span>' : `<span class="muted">${row.submitted} / ${r.needed}</span>`}</td>
         </tr>`).join('')}</tbody>
       </table></div>
     </div>`;
@@ -295,9 +296,16 @@ let lastRanking = null;
 
 function viewSettle() {
   main.innerHTML = '<div class="card"><p class="muted">載入中…</p></div>';
-  call('adminRanking').then(r => { lastRanking = r; main.innerHTML = settleHtml(r); })
+  call('adminRanking').then(r => { lastRanking = r; drawSettle(r); })
     .catch(e => { main.innerHTML = `<div class="card notice">${esc(e.message)}</div>`; });
   return null;
+}
+
+/** 畫出結算頁，並在下方放上成績表面板（評分表格式，可下載 PDF） */
+function drawSettle(r) {
+  main.innerHTML = settleHtml(r);
+  const box = main.querySelector('#sheet-panel');
+  if (box) mountSheetPanel(box, fromRanking(S.board ? S.board.competition.name : '', r), { onError: e => toast(e.message, 'bad') });
 }
 
 function settleHtml(r) {
@@ -343,24 +351,26 @@ function settleHtml(r) {
   <div class="card stack">
     <div class="row" style="justify-content:space-between"><h2 style="margin:0">結算與公布</h2><div class="row">${actions}</div></div>
     ${status}
-    <p class="muted small" style="margin:0">平均 = ${N} 位評審${r.aiSlot ? `（含 AI 評審＝評審${r.aiSlot}）` : ''}總分的和 ÷ ${N}。名次比的是未四捨五入的平均；專題組、創意組各自排名；同分時由主辦方決定先後或並列，並填寫理由。</p>
+    ${r.aiEnabled ? `<label class="check"><input type="checkbox" data-act="ai-counted" ${r.aiCounted ? 'checked' : ''} ${r.phase === 'published' ? 'disabled' : ''}> 平均計入 AI 評審的分數（AI 分數照樣保存；不勾選時 AI 只當參考，不影響平均、名次與公布）</label>${r.phase === 'published' ? '<div class="small muted">已公布，要改請先撤回。</div>' : ''}` : ''}
+    <p class="muted small" style="margin:0">平均 = ${N} 位評審${r.aiCounted ? `（含 AI 評審＝評審${r.aiSlot}）` : r.aiEnabled ? '（AI 評審分數不計入）' : ''}總分的和 ÷ ${N}。名次比的是未四捨五入的平均；專題組、創意組各自排名；同分時由主辦方決定先後或並列，並填寫理由。</p>
   </div>
   ${r.ties.length ? `<div class="card stack"><h2>同分處理</h2>${ties}</div>` : ''}
   ${r.categories.filter(cat => !cat.empty).map(cat => `<div class="card stack">
     <h2>${esc(cat.categoryLabel)}排名${r.phase === 'judging' ? '（預覽）' : ''}</h2>
     <div class="table-wrap"><table>
-      <thead><tr><th>名次</th><th>作品</th>${Array.from({ length: N }, (_, i) => `<th>${seatLabel(i + 1, r.aiSlot)}</th>`).join('')}<th>總分和</th><th>平均</th></tr></thead>
+      <thead><tr><th>名次</th><th>作品</th>${Array.from({ length: N }, (_, i) => `<th>${seatLabel(i + 1, r.aiSlot)}</th>`).join('')}<th>總分和</th><th>平均</th>${r.aiEnabled && !r.aiCounted ? '<th>AI 參考分</th>' : ''}</tr></thead>
       <tbody>
         ${cat.rows.map(x => `<tr><td><b>${x.rank}</b>${x.tied ? ' <span class="chip warn">並列</span>' : ''}</td>
           <td><b>${esc(x.code)}</b> ${esc(x.name)}<br><span class="muted small">${esc(x.workTitle)}</span></td>
           ${Array.from({ length: N }, (_, i) => { const j = x.judges.find(y => y.slot === i + 1); return `<td>${j ? j.total : '—'}</td>`; }).join('')}
-          <td>${x.sum}</td><td><b>${x.average.toFixed(2)}</b></td></tr>`).join('')}
+          <td>${x.sum}</td><td><b>${x.average.toFixed(2)}</b></td>${r.aiEnabled && !r.aiCounted ? `<td class="muted">${x.aiTotal ?? '—'}</td>` : ''}</tr>`).join('')}
         ${cat.incomplete.map(x => `<tr class="muted"><td>—</td><td><b>${esc(x.code)}</b> ${esc(x.name)}</td>
           ${Array.from({ length: N }, (_, i) => { const j = x.judges.find(y => y.slot === i + 1); return `<td>${j ? j.total : '—'}</td>`; }).join('')}
-          <td colspan="2"><span class="chip warn">待完成 ${x.submitted}/${N}</span></td></tr>`).join('')}
+          <td colspan="${r.aiEnabled && !r.aiCounted ? 3 : 2}"><span class="chip warn">待完成 ${x.submitted}/${N}</span></td></tr>`).join('')}
       </tbody>
     </table></div>
   </div>`).join('')}
+  <div id="sheet-panel"></div>
 `;
 }
 
@@ -375,7 +385,7 @@ function downloadCsv(filename, csv) {
 }
 
 /* ───────────── AI 評分（P7） ───────────── */
-const AI = { data: null, running: new Set(), all: false, stop: false };
+const AI = { data: null };
 const AI_CHIP = { uploading: 'info', processing: 'info', generating: 'info', finishing: 'info', done: 'ok', needs_review: 'warn', finalized: 'ok', failed: 'bad', draft: 'info' };
 const CAT_LABEL = { project: '專題組', creative: '創意組' };
 const catOptions = sel => ['project', 'creative'].map(k => `<option value="${k}" ${k === sel ? 'selected' : ''}>${CAT_LABEL[k]}</option>`).join('');
@@ -386,15 +396,12 @@ const aiItemsOfTeam = teamId => {
   return AI.data.itemsByCategory[row ? row.category : 'project'];
 };
 const aiActive = run => run && ['uploading', 'processing', 'generating', 'finishing'].includes(run.status);
-const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function viewAi() {
   main.innerHTML = '<div class="card"><p class="muted">載入中…</p></div>';
   call('adminAiOverview').then(d => {
     AI.data = d;
     drawAi();
-    // 重新整理或回到這個分頁時，接著查詢還在進行中的評分
-    d.rows.filter(r => aiActive(r.run) && !AI.running.has(r.teamId)).forEach(r => runAiOne(r.teamId, false, r.run));
   })
     .catch(e => { main.innerHTML = `<div class="card notice bad">${esc(e.message)}</div>`; });
   return null;
@@ -403,97 +410,39 @@ function viewAi() {
 function drawAi() {
   if (S.tab !== 'ai' || !AI.data) return;
   const d = AI.data;
-  d.canImport = d.enabled && ['judging', 'settling'].includes(d.phase);
   const head = !d.enabled ? '<div class="notice">這個競賽沒有開啟 AI 評審（在「競賽設定」開啟，開始評分後就不能改）。</div>'
-    : !d.configured && d.canImport ? '<div class="notice">AI 評分請用外部 AI 評完後存成檔案，再按「匯入 AI 評分檔」（伺服器沒有設定 Gemini 金鑰，不能在這裡直接執行 AI）。</div>'
-    : !d.configured ? '<div class="notice bad">伺服器還沒有設定 <span class="mono">GEMINI_API_KEY</span>，不能執行 AI 評分。請見部署說明。</div>'
-    : ['setup', 'collecting'].includes(d.phase) ? '<div class="notice">開始評分（鎖定版本）之後才能執行 AI 評分。</div>'
-    : !d.canRun ? `<div class="notice">目前是「${esc(d.phaseLabel)}」階段，不能再執行 AI 評分。</div>` : '';
-  const todo = d.rows.filter(r => r.score.status !== 'submitted' && !aiActive(r.run) && !(r.run && ['needs_review', 'draft'].includes(r.run.status)));
+    : ['setup', 'collecting'].includes(d.phase) ? '<div class="notice">開始評分（鎖定版本）之後才能匯入 AI 評分。</div>'
+    : !d.canImport ? `<div class="notice">目前是「${esc(d.phaseLabel)}」階段，不能再匯入 AI 評分。</div>` : '';
   const drafts = d.rows.filter(r => r.run && r.run.status === 'draft');
   main.innerHTML = `
   <div class="card stack">
     <div class="row" style="justify-content:space-between"><h2 style="margin:0">AI 評分${d.aiSlot ? `（評審${d.aiSlot}）` : ''}</h2>
-      <div class="row"><button class="btn" data-act="ai-copy-prompt" data-cat="project">複製專題組提示詞</button><button class="btn" data-act="ai-copy-prompt" data-cat="creative">複製創意組提示詞</button>${d.canImport && drafts.length ? `<button class="btn primary" data-act="ai-adopt-all">全部送出（${drafts.length} 件暫存）</button>` : ''}${d.canImport ? `<button class="btn ${drafts.length ? '' : 'primary'}" data-act="ai-import">匯入 AI 評分檔…</button>` : ''}${d.canRun ? (AI.all ? '<button class="btn" data-act="ai-stop">停止全部執行</button>'
-        : `<button class="btn primary" data-act="ai-all" ${todo.length ? '' : 'disabled'}>全部執行（${todo.length} 件未評）</button>`) : ''}</div></div>
+      <div class="row"><button class="btn" data-act="ai-copy-prompt" data-cat="project">複製專題組提示詞</button><button class="btn" data-act="ai-copy-prompt" data-cat="creative">複製創意組提示詞</button>${d.canImport && drafts.length ? `<button class="btn primary" data-act="ai-adopt-all">全部送出（${drafts.length} 件暫存）</button>` : ''}${d.canImport ? `<button class="btn ${drafts.length ? '' : 'primary'}" data-act="ai-import">匯入 AI 評分檔…</button>` : ''}</div></div>
     ${head}
-    <p class="muted small" style="margin:0">AI 看鎖定版本的影片，依評分表四項給分並寫評語；結果驗證通過就自動送出，算成一位評審。
-      有項目判斷不了或格式不對時標成「需要處理」，可以重跑，或由主辦人員補分並寫理由。${d.model ? `模型：<span class="mono">${esc(d.model)}</span>。` : ''}
-      AI 在 Google 背景評分，一件大約 1～5 分鐘；這個頁面每 5 秒查一次結果。中途關掉頁面也沒關係，回到這個分頁會接著查。<br>
-      <b>匯入檔案：</b>先按該組的「複製提示詞」（已帶入影片網址）貼到外部 AI，評完，每組存成一個 JSON 檔（檔名含組別，例如 team01.json），按「匯入 AI 評分檔」一次選多個。可以先「暫存」（只看、不計入平均），看過（可以按「修改」調整）再按「送出」才算成一位評審；也可以直接送出。格式見 tools/README.md。<br>
-      在這裡執行常失敗時，可以改在主辦方電腦上執行 <span class="mono">node tools/ai_score.mjs --all</span>（沒有時間限制，結果一樣會出現在這裡；見 tools/README.md）。</p>
+    <p class="muted small" style="margin:0">AI 評分在系統外完成：先按該組的「複製提示詞」（已帶入影片網址）貼到外部 AI，評完，每組存成一個 JSON 檔（檔名含組別，例如 team01.json），再按「匯入 AI 評分檔」一次選多個。<br>
+      可以先「暫存」（只看、不計入平均），看過（可以按「修改」調整）再按「送出」才算成一位評審；也可以直接送出。有項目判斷不了或格式不對時標成「需要處理」，可以重新匯入，或由主辦人員補分並寫理由。格式見 tools/README.md。</p>
   </div>
   <div class="card">
     <div class="table-wrap"><table>
-      <thead><tr><th>作品</th><th>AI 評分</th><th>最近一次執行</th><th></th></tr></thead>
+      <thead><tr><th>作品</th><th>AI 評分</th><th>最近一次匯入</th><th></th></tr></thead>
       <tbody>${d.rows.map(r => {
-        const run = r.run, going = AI.running.has(r.teamId) || aiActive(run);
+        const run = r.run, going = aiActive(run);
         return `<tr>
         <td><b>${esc(r.code)}</b> ${esc(r.name)} <span class="chip">${esc(r.categoryLabel)}</span><br><span class="muted small">${esc(r.workTitle)}・${fmtDur(r.duration)}</span></td>
         <td>${chip(r.score.label, SCORE_CHIP[r.score.status])}${r.score.total !== null ? ` <b>${r.score.total}</b>` : ''}${aiDraftTotal(r.run) !== null ? `<div class="small">暫存 <b>${aiDraftTotal(r.run)}</b>　<span class="muted">未計入平均</span></div>` : ''}</td>
-        <td>${run ? `${chip(run.statusLabel, AI_CHIP[run.status])}${run.local ? ' <span class="chip">主辦方電腦</span>' : ''}${going ? ' <span class="muted small">…</span>' : ''}
+        <td>${run ? `${chip(run.statusLabel, AI_CHIP[run.status])}${going ? ' <span class="muted small">…</span>' : ''}
           <div class="muted small">${fmtTime(run.startedAt)}${r.runCount > 1 ? `・共 ${r.runCount} 次` : ''}</div>
           ${run.error ? `<div class="small" style="color:var(--bad)">${esc(run.error)}</div>` : ''}
-          ${going && run.poll ? `<div class="muted small">${esc(run.poll)}</div>` : ''}
           ${run.status === 'needs_review' ? `<div class="small">${run.problems.map(esc).join('<br>')}</div>` : ''}` : '<span class="muted">—</span>'}</td>
         <td><div class="row">
           ${run && !going ? `<button class="btn small" data-act="ai-detail" data-id="${run.id}">詳情</button>` : ''}
           ${aiVideoUrl(r.code) ? `<button class="btn small" data-act="ai-copy-prompt" data-code="${esc(r.code)}">複製提示詞</button>` : ''}
           ${d.canImport && run && run.status === 'draft' && !going ? `<button class="btn small" data-act="ai-edit" data-id="${run.id}">修改</button><button class="btn small primary" data-act="ai-adopt" data-id="${run.id}">送出</button>` : ''}
-          ${d.canRun && run && run.status === 'needs_review' && !going ? `<button class="btn small primary" data-act="ai-fix" data-id="${run.id}">補分…</button>` : ''}
-          ${d.canRun && !going ? (r.score.status === 'submitted'
-            ? `<button class="btn small" data-act="ai-run" data-id="${r.teamId}" data-rerun="1">重新評分…</button>`
-            : `<button class="btn small ${run && run.status === 'needs_review' ? '' : 'primary'}" data-act="ai-run" data-id="${r.teamId}">${run ? '重新執行' : '執行 AI 評分'}</button>`) : ''}
+          ${d.canImport && run && run.status === 'needs_review' && !going ? `<button class="btn small primary" data-act="ai-fix" data-id="${run.id}">補分…</button>` : ''}
         </div></td></tr>`;
       }).join('') || '<tr><td colspan="4" class="muted">還沒有進入評分的作品</td></tr>'}</tbody>
     </table></div>
   </div>`;
-}
-
-/** 執行一件：開始（或接著查詢進行中的那次）→ 每 5 秒查一次，直到不是進行中。伺服器每次都很快回應，AI 在 Google 背景評分 */
-async function runAiOne(teamId, rerun, resumeRun) {
-  if (AI.running.has(teamId)) return null;
-  AI.running.add(teamId);
-  drawAi();
-  try {
-    let r = resumeRun || await call('adminAiStart', teamId, !!rerun);
-    const row = () => AI.data.rows.find(x => x.teamId === teamId);
-    row().run = r; drawAi();
-    let netErrors = 0;
-    for (let i = 0; i < 300 && aiActive(r); i++) {     // 最多約 25 分鐘（伺服器 20 分鐘沒完成就判定失敗）
-      await sleep(i === 0 ? 1500 : 5000);
-      try { r = await call('adminAiStep', r.id); netErrors = 0; } catch (e) {
-        if (++netErrors >= 5) throw e;                   // 網路偶爾不穩就下次再查
-        continue;
-      }
-      row().run = r; drawAi();
-    }
-    const code = row().code;
-    if (r.status === 'done') toast(`${code}：AI 評分完成`);
-    else if (r.status === 'needs_review') toast(`${code}：AI 評分需要處理`, 'bad');
-    else if (r.status === 'failed') toast(`${code}：AI 評分失敗（${r.error}）`, 'bad');
-    return r;
-  } catch (e) {
-    toast(e.message, 'bad');
-    return null;
-  } finally {
-    AI.running.delete(teamId);
-    try { AI.data = await call('adminAiOverview'); } catch (e) { /* 忽略 */ }
-    drawAi();
-  }
-}
-
-async function runAiAll() {
-  const ids = AI.data.rows.filter(r => r.score.status !== 'submitted' && !aiActive(r.run) && !(r.run && ['needs_review', 'draft'].includes(r.run.status))).map(r => r.teamId);
-  if (!(await confirmBox(`<h2>全部執行 AI 評分</h2><p>依序評 ${ids.length} 件還沒有 AI 評分的作品（每件約 1～5 分鐘，一件接一件）。「全部執行」要開著這個頁面才會繼續送出下一件。</p>`, '開始'))) return;
-  AI.all = true; AI.stop = false;
-  for (const id of ids) {
-    if (AI.stop) break;
-    await runAiOne(id, false);
-  }
-  AI.all = false;
-  drawAi();
-  toast(AI.stop ? '已停止全部執行' : '全部執行完畢');
 }
 
 function aiResultHtml(run, items) {
@@ -529,7 +478,7 @@ function aiVideoUrl(code) {
   return v && v.playbackPath ? new URL(v.playbackPath, location.href).href : '';
 }
 
-/** 給外部 AI 的評分提示詞：依目前的評分表產生，和系統內建給 Gemini 的規則一致 */
+/** 給外部 AI 的評分提示詞：依目前的評分表產生，貼到外部 AI 使用 */
 function aiPromptText(url, category) {
   const d = AI.data;
   const min = Math.max(30, Number(d.minCommentChars) || 0);
@@ -602,7 +551,7 @@ async function aiImportRun(files) {
         it.text = JSON.stringify(j);
       }
     } catch (e) { it.problems.push('不是正確的 JSON'); }
-    if (!it.problems.length && aiActive(it.row.run)) it.problems.push('AI 評分進行中');
+    if (!it.problems.length && aiActive(it.row.run)) it.problems.push('這件作品有一筆匯入還沒結束，請稍後重新整理');
     it.rerun = !it.problems.length && it.row.score.status === 'submitted';
     list.push(it);
   }
@@ -624,7 +573,7 @@ async function aiImportRun(files) {
   const result = [];
   for (const x of ok) {
     try {
-      const b = await call('adminAiLocalBegin', x.row.teamId, x.rerun, '人工匯入（檔案）');
+      const b = await call('adminAiLocalBegin', x.row.teamId, x.rerun, '外部 AI（匯入檔案）');
       const r = await call('adminAiLocalFinish', b.runId, { text: x.text, usage: {}, draft: mode === 'draft' });
       result.push(r.status === 'draft' ? `✓ ${x.code} 已暫存，合計 ${Object.values(r.result.items).reduce((s, v) => s + v, 0)}（尚未計入平均）`
         : r.status === 'done' ? `✓ ${x.code} 完成，總分 ${Object.values(r.result.items).reduce((s, v) => s + v, 0)}`
@@ -782,11 +731,10 @@ function viewSettings() {
       <h2>競賽設定</h2>
       <div class="field"><label>競賽名稱</label><input type="text" name="name" value="${esc(c.name)}" maxlength="100" required></div>
       <div class="field"><label>評審人數</label>
-        <div class="row">${[3, 5].map(n => `<label class="check"><input type="radio" name="judgeCount" value="${n}" ${c.judgeCount === n ? 'checked' : ''} ${ro ? 'disabled' : ''}> ${n} 人</label>`).join('')}</div>
-        ${ro ? '<span class="muted small">已經開始評分，不能修改。</span>' : '<span class="muted small">改成 3 人時，評審4、評審5 的席位會被移除。</span>'}</div>
-      <div class="field"><label class="check"><input type="checkbox" name="aiJudge" ${c.aiJudge ? 'checked' : ''} ${ro ? 'disabled' : ''}> 加入 AI 評審（Gemini），算成一位評審一起平均</label>
-        <span class="muted small">AI 坐在最後一席（${c.judgeCount} 位老師時是評審${c.judgeCount + 1}），由主辦人員在「AI 評分」分頁執行。
-          ${c.aiConfigured ? `伺服器已設定金鑰，模型：${esc(c.aiModel)}。` : '<b>伺服器還沒有設定 GEMINI_API_KEY。</b>'}${ro ? '已經開始評分，不能修改。' : ''}</span></div>
+        <div class="row">${[1, 3, 5].map(n => `<label class="check"><input type="radio" name="judgeCount" value="${n}" ${c.judgeCount === n ? 'checked' : ''} ${ro ? 'disabled' : ''}> ${n} 人</label>`).join('')}</div>
+        ${ro ? '<span class="muted small">已經開始評分，不能修改。</span>' : '<span class="muted small">減少人數時，多出來的席位會被移除。</span>'}</div>
+      <div class="field"><label class="check"><input type="checkbox" name="aiJudge" ${c.aiJudge ? 'checked' : ''} ${ro ? 'disabled' : ''}> 加入 AI 評審（多一席，分數匯入保存）</label>
+        <span class="muted small">AI 坐在最後一席（${c.judgeCount} 位老師時是評審${c.judgeCount + 1}），用外部 AI 評完後，由主辦人員在「AI 評分」分頁匯入評分檔。要不要把 AI 分數計入平均，到「結算與公布」頁勾選（預設計入）。${ro ? '已經開始評分，不能修改。' : ''}</span></div>
       <div class="field"><label>評語最少字數（優點、改進建議各自）</label><input type="number" name="minCommentChars" value="${c.minCommentChars}" min="0" max="200" ${ro ? 'disabled' : ''} style="width:120px"></div>
       <label class="check"><input type="checkbox" name="showStatusPage" ${c.showStatusPage ? 'checked' : ''}> 公布前，公開頁顯示各組收件與資格狀態（不顯示原因）</label>
       <label class="check"><input type="checkbox" name="showItemScores" ${c.showItemScores ? 'checked' : ''}> 公布結果時顯示每位評審的分項分數</label>
@@ -832,11 +780,16 @@ main.addEventListener('click', async e => {
       if (r) { downloadCsv(r.filename, r.csv); toast('已匯出 ' + r.filename); }
       break;
     }
+    case 'ai-counted': {
+      const on = el.checked;
+      if (await busy(null, () => call('adminSetAiCounted', on))) { toast(on ? 'AI 分數已計入平均' : 'AI 分數改為只當參考，不計入平均'); render(); } else render();
+      break;
+    }
     case 'tie-up': {
       const arr = tieOrder[el.dataset.key], i = Number(el.dataset.i);
       [arr[i - 1], arr[i]] = [arr[i], arr[i - 1]];
       const reason = main.querySelector(`[id="reason-${el.dataset.key}"]`).value;
-      main.innerHTML = settleHtml(lastRanking);
+      drawSettle(lastRanking);
       main.querySelector(`[id="reason-${el.dataset.key}"]`).value = reason;
       break;
     }
@@ -875,18 +828,11 @@ main.addEventListener('click', async e => {
       break;
     }
     case 'preview-judging': await previewJudging(el); break;
-    case 'ai-run': {
-      if (el.dataset.rerun && !(await confirmBox('<h2>重新評分</h2><p>會重新請 AI 評這件作品。新的結果驗證通過後，<b>取代</b>目前的 AI 評分（舊分數留在更正歷程）；新結果需要處理時，目前的 AI 評分維持不變。</p>', '重新評分'))) return;
-      await runAiOne(id, !!el.dataset.rerun);
-      break;
-    }
     case 'ai-import': aiImportPick(); break;
     case 'ai-copy-prompt': await aiCopyPrompt(el.dataset.code || '', el.dataset.cat || ''); break;
     case 'ai-edit': await aiEditDraft(id); break;
     case 'ai-adopt': await aiAdopt([id]); break;
     case 'ai-adopt-all': await aiAdopt(AI.data.rows.filter(r => r.run && r.run.status === 'draft').map(r => r.run.id)); break;
-    case 'ai-all': await runAiAll(); break;
-    case 'ai-stop': AI.stop = true; toast('目前這件完成後停止'); break;
     case 'ai-detail': await aiDetail(id); break;
     case 'ai-fix': await aiFix(id); break;
     case 'goto': setTab(el.dataset.tab); break;
