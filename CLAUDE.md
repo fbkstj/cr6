@@ -11,7 +11,7 @@
 
 ## 正式環境（2026-11-18 起上線）
 
-- 本資料夾是公開 repo `fbkstj/cr6` 的本機副本，網站 https://fbkstj.github.io/cr6/ （Pages 目前從根目錄發布，網頁在 `docs/`）。推送等於公開發布，先問老師。
+- 本資料夾是公開 repo `fbkstj/cr6` 的本機副本，網站 https://fbkstj.github.io/cr6/ （Pages 從根目錄發布，網站檔案在專案最上層：`admin.html`、`results.html`、`assets/`、`videos/`、`config.js`；2026-11-22 起不再有 `docs/` 資料夾，網址沒有 `/docs/`）。推送等於公開發布，先問老師。
 - Supabase 專案 **`ciovykuhvpelghrjlutp`**。**`mcewgfzeqhdpygfvbfij` 是重補修正式系統，評分系統的任何指令都不能對它執行**（兩者在網頁上同名，一律用代碼辨認）。
 - 學校網路擋資料庫連接埠 5432／6543：`supabase db push` 會逾時，改用 `npx.cmd supabase db query --remote=ciovykuhvpelghrjlutp --yes --file <sql>`（走 HTTPS），套用後登記到 `supabase_migrations.schema_migrations`。`functions deploy` 不受影響。
 - CLI 對雲端的變更要加 `--yes`；部署前要老師同意。

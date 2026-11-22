@@ -13,7 +13,7 @@ export function setToken(t) {
 
 /** 呼叫 API。需要登入的功能自動帶 token（第一個參數）。登入逾時就回到登入頁。 */
 export async function api(fn, ...args) {
-  if (!CONFIG.apiUrl) throw new Error('網站還沒有設定 API 網址（docs/config.js）');
+  if (!CONFIG.apiUrl) throw new Error('網站還沒有設定 API 網址（config.js）');
   let r;
   try {
     r = await fetch(CONFIG.apiUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ fn, args }) });

@@ -1,5 +1,5 @@
 // 本機開發伺服器：node test/devserver.mjs [port]
-// 不連任何雲端服務：API 用記憶體資料庫（重開就清空），網頁來自 docs/，
+// 不連任何雲端服務：API 用記憶體資料庫（重開就清空），網頁來自專案最上層（admin.html、assets/…），
 // 示範影片來自 test/out/demo_videos/（先執行 python test/make_demo_videos.py 產生）。
 import http from 'node:http';
 import fs from 'node:fs';
@@ -9,12 +9,12 @@ import { createApi } from '../supabase/functions/api/core.js';
 import { createMemDb } from './memdb.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const DOCS = path.join(ROOT, 'docs');
+const DOCS = ROOT;   // 網站檔案在專案最上層（GitHub Pages 從根目錄發布）
 const DEMO = path.join(ROOT, 'test', 'out', 'demo_videos');
 const PORT = Number(process.argv[2]) || 8790;
 
 const db = createMemDb();
-const SIM = !!process.env.SIM || process.argv.includes('--sim');   // SIM=1：用 docs/videos 的 8 支真實影片模擬整場比賽（見 test/sim_world.mjs）
+const SIM = !!process.env.SIM || process.argv.includes('--sim');   // SIM=1：用 videos/ 的 8 支真實影片模擬整場比賽（見 test/sim_world.mjs）
 if (SIM) await db.seedDemo({ judgeCount: 3, teams: 0, aiJudge: true });
 else await db.seedDemo({ judgeCount: 3, teams: 4, aiJudge: true, creative: ['team03', 'team04'] });
 
@@ -55,6 +55,8 @@ function sendFile(req, res, file) {
 
 function resolveStatic(urlPath) {
   const rel = decodeURIComponent(urlPath).replace(/^\/+/, '') || 'index.html';
+  // 網站檔案現在在專案最上層，只開放網頁、assets/、videos/（不可讀到 private/、影片原檔/、.git 等）
+  if (!/^(assets\/|videos\/|(index|admin|judge|results)\.html$)/.test(rel) || rel.includes('..')) return null;
   const candidates = rel.startsWith('videos/') ? (SIM ? [path.join(DOCS, rel)] : [path.join(DEMO, rel.slice(7)), path.join(DOCS, rel)]) : [path.join(DOCS, rel)];
   for (const f of candidates) {
     const full = path.resolve(f);

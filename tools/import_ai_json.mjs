@@ -13,23 +13,25 @@
 // 等你輸入 y 才會寫入。
 //
 // 選項：
-//   --all             匯入資料夾裡所有 teamXX.json
+//   --all             匯入資料夾裡所有 .json（單組的 teamXX.json，或專題組＋創意組合併的檔案）
+//   --file 檔案       只匯入這個檔案（合併檔或單組檔，可重複寫多次）
 //   --dir 資料夾      預設 AI評分結果
 //   --rerun           已經有 AI 評分的作品也重新匯入（新結果驗證通過才取代舊的，舊的留在更正歷程）
 //   --label 名稱      記在 AI 評分紀錄的「模型」欄位，預設「人工匯入」
 //   --draft           只暫存（不計入平均），到後台「AI 評分」分頁看過再按「採用」
 //   --yes             不再詢問，直接寫入（演練時用）
-//   --api 網址        評分系統 API，預設讀 docs/config.js
+//   --api 網址        評分系統 API，預設讀 config.js
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { splitAiJson } from '../assets/aifile.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /* ───── 參數 ───── */
 const argv = process.argv.slice(2);
-const opt = { all: false, rerun: false, draft: false, yes: false, dir: 'AI評分結果', label: '人工匯入', api: '', teams: [] };
+const opt = { all: false, rerun: false, draft: false, yes: false, dir: 'AI評分結果', label: '人工匯入', api: '', teams: [], files: [] };
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === '--all') opt.all = true;
@@ -37,42 +39,53 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--draft') opt.draft = true;
   else if (a === '--yes') opt.yes = true;
   else if (a === '--dir') opt.dir = argv[++i];
+  else if (a === '--file') opt.files.push(argv[++i]);
   else if (a === '--label') opt.label = argv[++i];
   else if (a === '--api') opt.api = argv[++i];
   else if (/^team\d{2}$/i.test(a)) opt.teams.push(a.toLowerCase());
   else { console.error('看不懂的參數：' + a + '\n用法：node tools/import_ai_json.mjs team01 team02 … 或 --all（見檔案開頭說明）'); process.exit(2); }
 }
-if (!opt.all && !opt.teams.length) { console.error('請指定組別（例如 team01）或 --all'); process.exit(2); }
+if (!opt.all && !opt.teams.length && !opt.files.length) { console.error('請指定組別（例如 team01）、--file 檔案或 --all'); process.exit(2); }
 if (!opt.api) {
-  const cfg = fs.readFileSync(path.join(ROOT, 'docs', 'config.js'), 'utf8');
+  const cfg = fs.readFileSync(path.join(ROOT, 'config.js'), 'utf8');
   const m = /apiUrl\s*:\s*['"]([^'"]+)['"]/.exec(cfg);
-  if (!m) { console.error('docs/config.js 裡找不到 apiUrl，請用 --api 指定'); process.exit(2); }
+  if (!m) { console.error('config.js 裡找不到 apiUrl，請用 --api 指定'); process.exit(2); }
   opt.api = m[1];
 }
 const dir = path.isAbsolute(opt.dir) ? opt.dir : path.join(ROOT, opt.dir);
 
 /* ───── 讀檔（先在本機檢查格式，伺服器還會再驗證一次） ───── */
-const codes = opt.all
-  ? (fs.existsSync(dir) ? fs.readdirSync(dir).map(f => /^(team\d{2})\.json$/i.exec(f)).filter(Boolean).map(m => m[1].toLowerCase()).sort() : [])
-  : opt.teams;
-if (!codes.length) { console.error(`在 ${dir} 找不到 teamXX.json`); process.exit(1); }
+// 檔案可以是單組（teamXX.json），也可以是專題組＋創意組合併的檔案（格式見 assets/aifile.js）
+let paths = opt.files.map(f => (path.isAbsolute(f) ? f : path.resolve(f)));
+if (opt.all) {
+  if (!fs.existsSync(dir)) { console.error(`找不到資料夾 ${dir}`); process.exit(1); }
+  paths = paths.concat(fs.readdirSync(dir).filter(f => /\.json$/i.test(f)).sort().map(f => path.join(dir, f)));
+} else if (opt.teams.length) {
+  paths = paths.concat(opt.teams.map(c => path.join(dir, c + '.json')));
+}
+if (!paths.length) { console.error(`在 ${dir} 找不到 .json 檔`); process.exit(1); }
 
-const files = [];   // { code, text, items:[分數], total, problems:[] }
-for (const code of codes) {
-  const p = path.join(dir, code + '.json');
-  const f = { code, problems: [] };
-  if (!fs.existsSync(p)) { f.problems.push('找不到檔案 ' + p); files.push(f); continue; }
-  let j;
-  try { j = JSON.parse(fs.readFileSync(p, 'utf8').replace(/^﻿/, '')); } catch (e) { f.problems.push('不是正確的 JSON：' + e.message); files.push(f); continue; }
-  if (!j || !Array.isArray(j.items)) { f.problems.push('缺少 items 陣列'); files.push(f); continue; }
-  for (const k of Object.keys(j)) if (k.startsWith('_')) delete j[k];
-  f.scores = j.items.map(x => (x && Number.isInteger(x.score)) ? x.score : null);
-  if (f.scores.some(s => s === null)) f.problems.push('有項目的分數不是整數');
-  f.total = f.scores.reduce((a, b) => a + (b || 0), 0);
-  f.strengths = String(j.strengths || '');
-  f.improvements = String(j.improvements || '');
-  f.text = JSON.stringify(j);
-  files.push(f);
+const files = [];   // { code, text, scores:[分數], total, problems:[] }
+const seen = new Set();
+for (const p of paths) {
+  const name = path.basename(p);
+  if (!fs.existsSync(p)) { files.push({ code: name, problems: ['找不到檔案 ' + p] }); continue; }
+  let parsed;
+  try { parsed = JSON.parse(fs.readFileSync(p, 'utf8').replace(/^\uFEFF/, '')); } catch (e) { files.push({ code: name, problems: ['不是正確的 JSON：' + e.message] }); continue; }
+  const { entries, problems } = splitAiJson(parsed, name);
+  problems.forEach(x => files.push({ code: name, problems: [x] }));
+  for (const { code, json: j } of entries) {
+    if (opt.teams.length && !opt.all && !opt.files.length && !opt.teams.includes(code)) continue;
+    const f = { code, problems: [] };
+    if (seen.has(code)) f.problems.push('在多個檔案裡重複（只用第一個）');
+    seen.add(code);
+    if (!Array.isArray(j.items)) { f.problems.push('缺少 items 陣列'); files.push(f); continue; }
+    f.scores = j.items.map(x => (x && Number.isInteger(x.score)) ? x.score : null);
+    if (f.scores.some(s => s === null)) f.problems.push('有項目的分數不是整數');
+    f.total = f.scores.reduce((a, b) => a + (b || 0), 0);
+    f.text = JSON.stringify(j);
+    files.push(f);
+  }
 }
 
 /* ───── 輸入（密碼不顯示、不存檔） ───── */

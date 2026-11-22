@@ -1122,6 +1122,44 @@ const aiReply = (scores, extra) => Object.assign({
   });
 }
 
+console.log('AI 評分檔：單組與合併檔');
+{
+  const { splitAiJson } = await import('../assets/aifile.js');
+  const one = { items: [{ no: 1, score: 3 }], strengths: 'a', improvements: 'b', _source: 'x' };
+  await step('單組檔案：用檔名裡的組別；備註欄位（底線開頭）被忽略', async () => {
+    const r = splitAiJson(one, 'team03.json');
+    assert.deepEqual(r.problems, []);
+    assert.deepEqual(r.entries.map(e => e.code), ['team03']);
+    assert.equal(r.entries[0].json._source, undefined);
+    assert.deepEqual(splitAiJson(one, 'x.json').problems.length, 1, '檔名沒有組別也沒寫 team 欄位 → 要提示');
+    assert.equal(splitAiJson({ ...one, team: 'TEAM07' }, 'x.json').entries[0].code, 'team07');
+  });
+  await step('合併檔：以組別當欄位、teams 欄位、陣列三種寫法（專題組與創意組混在一起）', async () => {
+    const a = splitAiJson({ team01: one, team04: one, _note: '備註' }, 'merged.json');
+    assert.deepEqual(a.entries.map(e => e.code), ['team01', 'team04']);
+    const b = splitAiJson({ teams: { team02: one, team05: one } }, 'm.json');
+    assert.deepEqual(b.entries.map(e => e.code), ['team02', 'team05']);
+    const c = splitAiJson([{ team: 'team03', ...one }, { code: 'team06', ...one }], 'm.json');
+    assert.deepEqual(c.entries.map(e => e.code), ['team03', 'team06']);
+    assert.equal(c.entries[0].json.team, undefined, '組別欄位不會送給伺服器');
+    const d2 = splitAiJson({ teams: [{ team: 'team08', ...one }] }, 'm.json');
+    assert.deepEqual(d2.entries.map(e => e.code), ['team08']);
+  });
+  await step('依組別分類的合併檔（外部 AI 常見輸出）：{專題組:[{team,result:{items…}}], 創意組:[…]}', async () => {
+    const e = (team, extra) => ({ team, category: '專題組', title: 'x', video: 'v', total: 3, result: { ...one, ...(extra || {}) } });
+    const r = splitAiJson({ generated_at: '2026-11-22', rubrics: {}, 專題組: [e('team01'), e('team02')], 創意組: [e('team04')] }, '全部.json');
+    assert.deepEqual(r.problems, []);
+    assert.deepEqual(r.entries.map(x => x.code), ['team01', 'team02', 'team04']);
+    assert.deepEqual(Object.keys(r.entries[0].json).sort(), ['improvements', 'items', 'strengths'], 'title、video、total 等多餘欄位不送給伺服器');
+  });
+  await step('合併檔的錯誤：重複組別、沒有組別、格式不認得', async () => {
+    assert.ok(splitAiJson([{ team: 'team01', ...one }, { team: 'team01', ...one }], 'm.json').problems.some(x => /出現兩次/.test(x)));
+    assert.ok(splitAiJson([one], 'm.json').problems.some(x => /找不到組別/.test(x)));
+    assert.ok(splitAiJson({ foo: 1 }, 'm.json').problems.some(x => /格式不認得/.test(x)));
+    assert.ok(splitAiJson('abc', 'm.json').problems.length === 1);
+  });
+}
+
 async function expectErrOf(ctx, re, fn, ...args) {
   const r = await ctx.api.handle({ fn, args });
   assert.equal(r.ok, false, fn + ' 應該失敗');

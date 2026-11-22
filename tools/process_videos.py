@@ -6,7 +6,7 @@
     python tools/process_videos.py --only team01 只處理某一組
 
 檔名規則：teamNN_vK.mp4 或 teamNN_vK.mov（例如 team01_v1.mov；補件就是 team01_v2.mov）。
-輸出：docs/videos/teamNN_vK.mp4（H.264／AAC，保留原檔解析度最高 1080p，每支 ≤ 75 MB）與 docs/videos/manifest.json。腳本不會 git push，請確認報告後再推送。
+輸出：videos/teamNN_vK.mp4（H.264／AAC，保留原檔解析度最高 1080p，每支 ≤ 75 MB）與 videos/manifest.json。腳本不會 git push，請確認報告後再推送。
 設計依據：開發計畫書.md 第 10 節。
 """
 from __future__ import annotations
@@ -221,7 +221,7 @@ def save_manifest(path: Path, manifest: dict) -> None:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description='檢查學生影片並轉成網頁播放版')
     ap.add_argument('--src', type=Path, default=ROOT / '影片原檔', help='原檔資料夾（預設：影片原檔/）')
-    ap.add_argument('--out', type=Path, default=ROOT / 'docs' / 'videos', help='播放版輸出資料夾（預設：docs/videos/）')
+    ap.add_argument('--out', type=Path, default=ROOT / 'videos', help='播放版輸出資料夾（預設：videos/）')
     ap.add_argument('--only', help='只處理某一組，例如 team01')
     ap.add_argument('--check-only', action='store_true', help='只檢查，不轉檔、不改清單')
     ap.add_argument('--no-limits', action='store_true', help='測試模式：容量與長度超過上限不擋，只在清單註記')
@@ -306,7 +306,7 @@ def main(argv: list[str] | None = None) -> int:
     print('─' * 60)
     if not args.check_only and any(s in ('完成', '不合格') for _, s, _ in rows):
         print('清單已更新：' + str(manifest_path.relative_to(ROOT) if manifest_path.is_relative_to(ROOT) else manifest_path))
-        print('確認無誤後再 git add docs/videos 並推送；推送後到後台按「同步影片清單」。')
+        print('確認無誤後再 git add videos 並推送；推送後到後台按「同步影片清單」。')
     return 1 if any(s == '錯誤' for _, s, _ in rows) else 0
 
 

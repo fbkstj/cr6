@@ -48,7 +48,7 @@ python tools/process_videos.py
 1. 確認報告沒問題後推送（推送等於公開發布）：
 
    ```
-   git add docs/videos
+   git add videos
    git commit -m "新增影片：team01_v1、team02_v1"
    git push
    ```
@@ -68,6 +68,17 @@ python tools/process_videos.py
 
 以底線開頭的欄位（例如 `_source`）只是備註，會被忽略。
 
+**合併檔**：專題組、創意組的 AI 評分可以合併成**一個檔案**一次匯入（後台「匯入 AI 評分檔」、命令列都支援）。三種寫法任選一種：
+
+```
+{"team01":{"items":[…],"strengths":"…","improvements":"…"}, "team04":{…}, …}      ← 以組別代碼當欄位
+{"teams":{"team01":{…}, "team04":{…}}}   或   {"teams":[{"team":"team01",…}]}
+[{"team":"team01","items":[…],…}, {"team":"team04",…}]                       ← 陣列
+{"generated_at":"…","專題組":[{"team":"team01","category":"專題組","title":"…","video":"…","total":75,"result":{"items":[…],"strengths":"…","improvements":"…"}}, …],"創意組":[…]}   ← 後台「複製 AI 評分提示詞」請外部 AI 輸出的格式
+```
+
+組別代碼是 team01、team02… ；專題組、創意組的作品可以混在同一個檔案裡，系統依各作品的組別用對應的評分表驗證。範例：`AI評分結果/合併輸出/AI評分合併.json`（8 組）。
+
 ```
 node tools/import_ai_json.mjs --all
 ```
@@ -79,6 +90,7 @@ node tools/import_ai_json.mjs --all
 | 指令 | 用途 |
 |---|---|
 | `node tools/import_ai_json.mjs team01` | 只匯入 team01（可以列好幾組） |
+| `node tools/import_ai_json.mjs --file AI評分結果/合併輸出/AI評分合併.json` | 匯入一個合併檔（也可以是單組檔，`--file` 可以寫多次） |
 | `node tools/import_ai_json.mjs --all --rerun` | 已經有 AI 評分也取代（舊的留在更正歷程） |
 | `node tools/import_ai_json.mjs --all --draft` | 只「暫存」：先存起來看，不計入平均；到後台「AI 評分」分頁按「採用」才算數 |
 | `--dir 資料夾`、`--label 名稱` | 換檔案資料夾；改記在紀錄裡的來源名稱 |
