@@ -106,7 +106,10 @@ def main() -> int:
         (src / 'readme.txt').write_text('not a video')
         shutil.copy(src / 'team04_v1.mp4', src / 'abc.mp4')    # 檔名不符規則
 
-        print('第一次執行腳本…')
+        print('第一次執行腳本（長度上限設為 10:00，驗證規則本身）…')
+        default_limit = pv.MAX_DURATION_SEC
+        assert default_limit is None, '老師 2026-11-23 取消長度限制：預設應為 None'
+        pv.MAX_DURATION_SEC = 600.0
         code, v = run_script(src, out)
         assert code == 0, f'結束碼應為 0，實際 {code}'
         ok('第一次執行正常結束')
@@ -200,6 +203,52 @@ def main() -> int:
         assert '測試模式未擋' in t11['check_notes'] and '超過 10:00' in t11['check_notes'], t11['check_notes']
         assert (nl_out / 'team11_v1.mp4').exists()
         ok('測試模式：10:01 的影片照樣轉檔，清單註記「測試模式未擋」')
+        pv.MAX_DURATION_SEC = default_limit
+
+        # 預設（不限長度）：10:01 照樣收、不註記
+        dl_src, dl_out = tmp / 'deflimit', tmp / 'deflimit_out'
+        dl_src.mkdir()
+        shutil.copy(nl_src / 'team11_v1.mov', dl_src / 'team12_v1.mov')
+        code, vd = run_script(dl_src, dl_out)
+        assert code == 0 and vd[('team12', 1)]['check_ok'] and not vd[('team12', 1)]['check_notes'], vd
+        ok('預設不限長度：10:01 的影片照樣轉檔，沒有註記')
+        assert pv.MAX_SOURCE_MB == 3072
+        ok('原檔容量上限 3 GB')
+
+        # 「專題組」「創意組」資料夾：專N／創N 直接匯入，記錄作品名稱與組別
+        im_src, im_out = tmp / 'import', tmp / 'import_out'
+        pj, cr = im_src / '115初賽' / '專題組', im_src / '115初賽' / '創意組'
+        pj.mkdir(parents=True)
+        cr.mkdir(parents=True)
+        (im_src / '115初賽' / '不使用').mkdir()
+        clip(pj / '專1_門外漢.mp4', 3)
+        clip(pj / '專2_後面有車!.mp4', 3, size='320x240', rate=12)
+        clip(cr / '創1_The_Watchful_Baymax (1).MOV', 3)
+        clip(cr / '專9_放錯資料夾.mp4', 2)
+        clip(cr / '作品沒有編號.mp4', 2)
+        clip(pj / '專3_甲.mp4', 2)
+        clip(pj / '專3_乙.mp4', 2, rate=15)
+        clip(im_src / '115初賽' / '不使用' / '專4_不要的.mp4', 2)
+        (pj / '說明.docx').write_text('x')
+        code, vi = run_script(im_src, im_out)
+        assert code == 1, code   # 有「錯誤」（放錯資料夾、同一組兩支）
+        t1, t2, c1 = vi[('team01', 1)], vi[('team02', 1)], vi[('team51', 1)]
+        assert t1['check_ok'] and t1['title'] == '門外漢' and t1['category'] == 'project', t1
+        assert t2['title'] == '後面有車!' and c1['title'] == 'The Watchful Baymax' and c1['category'] == 'creative', (t2, c1)
+        assert (im_out / 'team01_v1.mp4').exists() and (im_out / 'team51_v1.mp4').exists()
+        ok('專1→team01、創1→team51；作品名稱取自檔名（底線換空白、去掉 (1)）、組別取自資料夾')
+        assert ('team03', 1) not in vi and ('team09', 1) not in vi and ('team59', 1) not in vi and ('team04', 1) not in vi
+        ok('同一組兩支不同檔案、放錯資料夾、沒有編號、「不使用」資料夾裡的檔案都不處理')
+        assert str(tmp) not in (im_out / 'manifest.json').read_text(encoding='utf-8')
+        ok('清單不含電腦上的資料夾路徑')
+        (pj / '專3_乙.mp4').unlink()
+        clip(pj / '專1_門外漢_補件.mp4', 4)
+        code, vi2 = run_script(im_src, im_out, '--only', 'team01')
+        assert vi2[('team01', 2)]['check_ok'] and vi2[('team01', 1)] == t1 and ('team03', 1) not in vi2, vi2.keys()
+        ok('同一組放新的檔案＝補件，自動成為 v2，v1 保留')
+        code, vi3 = run_script(im_src, im_out)
+        assert vi3[('team03', 1)]['title'] == '甲' and ('team01', 3) not in vi3
+        ok('移走多的那支後重跑：專3 正常處理，已處理過的不重複')
 
         expect = {6: 1080, 10: 1080, 15: 720, 30: 480}   # 解析度優先：碼率真的不夠才降
         for minutes, res in expect.items():

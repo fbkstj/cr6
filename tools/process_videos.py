@@ -1,11 +1,16 @@
 """影片處理腳本：檢查學生影片原檔 → 轉成網頁播放版 → 更新影片清單。
 
-用法（在專案資料夾執行）：
+用法（在專案資料夾執行；平常雙擊專案資料夾的「轉檔.bat」即可）：
     python tools/process_videos.py               處理 影片原檔/ 裡所有新的影片
     python tools/process_videos.py --check-only  只檢查，不轉檔、不改清單
     python tools/process_videos.py --only team01 只處理某一組
 
-檔名規則：teamNN_vK.mp4 或 teamNN_vK.mov（例如 team01_v1.mov；補件就是 team01_v2.mov）。
+影片來源（兩種都可以）：
+  1. 「專題組」「創意組」資料夾（影片原檔/ 底下任何一層，例如 影片原檔/115全國專題製作競賽校內初賽/專題組/）：
+     檔名「專1_作品名稱.mp4」「創3_作品名稱.mov」→ 組別代碼 專N＝teamNN、創N＝team(50+N)（例如 專1＝team01、創1＝team51），
+     作品名稱取自檔名、組別取自資料夾，寫進清單讓後台同步時自動建立組別。不用改檔名；
+     同一組再放一支不同的檔案＝補件（自動成為下一個版本）。不要的檔案移到別的資料夾（例如「不使用」）。
+  2. 影片原檔/ 最上層的 teamNN_vK.mp4／.mov（舊規則，例如 team01_v1.mov；補件 team01_v2.mov）。
 輸出：videos/teamNN_vK.mp4（H.264／AAC，保留原檔解析度最高 1080p，每支 ≤ 75 MB）與 videos/manifest.json。腳本不會 git push，請確認報告後再推送。
 設計依據：開發計畫書.md 第 10 節。
 """
@@ -23,8 +28,8 @@ import time
 from pathlib import Path
 
 # ───── 試辦值（開發計畫書第 15 節） ─────
-MAX_SOURCE_MB = 500          # 原檔容量上限
-MAX_DURATION_SEC = 600.0     # 最長 10:00（含）；時長四捨五入到 0.1 秒後比較
+MAX_SOURCE_MB = 3072         # 原檔容量上限（老師 2026-11-23 由 500 MB 提高到 3 GB）
+MAX_DURATION_SEC: float | None = None   # 長度上限（秒，四捨五入到 0.1 秒後比較）；None＝不限制（老師 2026-11-23 取消 10:00 限制，超長影片自動降解析度）
 SHORT_SIDE = 1080            # 播放版短邊上限：保留原檔解析度，最高 1080p（不放大）
 MAX_OUTPUT_MB = 75           # 播放版容量上限（老師 2026-11-19 指定；GitHub 單檔上限 100 MB）
 DURATION_TOLERANCE = 0.5     # 播放版與原檔時長容許差距（秒）
@@ -60,6 +65,57 @@ def encode_passes(duration: float, src_short: int = 1080) -> list[dict]:
 
 ROOT = Path(__file__).resolve().parent.parent
 NAME_RE = re.compile(r'^(team\d{2})_v(\d+)\.(mp4|mov)$', re.IGNORECASE)
+# 「專題組」「創意組」資料夾裡的檔名：專1_作品名稱.mp4、創3_作品名稱.mov
+CAT_DIRS = {'專題組': ('專', 'project'), '創意組': ('創', 'creative')}
+IMPORT_RE = re.compile(r'^(專|創)\s*(\d{1,2})\s*[_\-－、.．\s]\s*(.+?)\.(mp4|mov)$', re.IGNORECASE)
+CREATIVE_BASE = 50           # 創N 的組別代碼＝team(50+N)
+
+
+def team_code(prefix: str, n: int) -> str:
+    return f'team{n:02d}' if prefix == '專' else f'team{CREATIVE_BASE + n:02d}'
+
+
+def clean_title(raw: str) -> str:
+    """檔名裡的作品名稱：底線換空白、去掉雲端硬碟重複下載加的 (1)"""
+    t = re.sub(r'\s*[(（]\d+[)）]\s*$', '', raw).replace('_', ' ')
+    return re.sub(r'\s+', ' ', t).strip()
+
+
+def find_sources(src: Path) -> tuple[list[dict], list[tuple[str, str, str]]]:
+    """列出要處理的影片：最上層的 teamNN_vK，以及任何一層「專題組」「創意組」資料夾裡的 專N_／創N_ 檔案。
+    回傳（候選清單, 直接列入報告的略過／錯誤）"""
+    items: list[dict] = []
+    rows: list[tuple[str, str, str]] = []
+
+    def skip(p: Path) -> bool:
+        return p.name.startswith('.') or p.name.lower() == 'desktop.ini' or p.suffix.lower() in ('.part', '.tmp')
+
+    for path in sorted(p for p in src.iterdir() if p.is_file() and not skip(p)):
+        m = NAME_RE.match(path.name)
+        if m:
+            items.append({'path': path, 'label': path.name, 'team': m.group(1).lower(), 'version': int(m.group(2))})
+        elif path.suffix.lower() in ('.mp4', '.mov'):
+            rows.append((path.name, '略過', '檔名不符規則：放進「專題組」「創意組」資料夾並命名為 專1_作品名稱.mp4，或改名為 teamNN_vK.mp4'))
+    for d in sorted(p for p in src.rglob('*') if p.is_dir() and p.name in CAT_DIRS):
+        want, category = CAT_DIRS[d.name]
+        for path in sorted(p for p in d.iterdir() if p.is_file() and not skip(p)):
+            if path.suffix.lower() not in ('.mp4', '.mov'):
+                continue
+            label = f'{d.name}/{path.name}'
+            m = IMPORT_RE.match(path.name)
+            if not m:
+                rows.append((label, '略過', f'檔名要以「{want}編號_」開頭，例如 {want}1_作品名稱{path.suffix}'))
+                continue
+            prefix, n = m.group(1), int(m.group(2))
+            if prefix != want:
+                rows.append((label, '錯誤', f'檔名是「{prefix}」開頭，卻放在「{d.name}」資料夾'))
+                continue
+            if not 1 <= n < CREATIVE_BASE:
+                rows.append((label, '錯誤', f'編號 {n} 超出範圍（1～{CREATIVE_BASE - 1}）'))
+                continue
+            items.append({'path': path, 'label': label, 'team': team_code(prefix, n), 'version': None,
+                          'title': clean_title(m.group(3)), 'category': category, 'no': f'{prefix}{n}'})
+    return items, rows
 
 
 def run(cmd: list[str]) -> subprocess.CompletedProcess:
@@ -138,8 +194,8 @@ def check_source(path: Path, limits: bool = True) -> tuple[dict, list[str]]:
     info['duration_sec'] = round(duration, 2) if duration is not None else None
     if duration is None:
         problems.append('讀不到影片長度')
-    elif round(duration, 1) > MAX_DURATION_SEC:
-        over.append(f'長度 {fmt_dur(duration)}，超過 10:00')
+    elif MAX_DURATION_SEC is not None and round(duration, 1) > MAX_DURATION_SEC:
+        over.append(f'長度 {fmt_dur(duration)}，超過 {fmt_dur(MAX_DURATION_SEC)}')
 
     if not problems:
         # 完整解碼一次，確認中間沒有壞掉的片段
@@ -240,31 +296,46 @@ def main(argv: list[str] | None = None) -> int:
     by_sha = {v['source_sha256']: v for v in manifest['versions']}
     by_key = {(v['team'], v['version']): v for v in manifest['versions']}
 
-    rows: list[tuple[str, str, str]] = []   # （檔名, 結果, 說明）
-    files = sorted(p for p in args.src.iterdir() if p.is_file() and not p.name.startswith('.') and p.name.lower() != 'desktop.ini')
-    for path in files:
-        m = NAME_RE.match(path.name)
-        if not m:
-            rows.append((path.name, '略過', '檔名不符規則 teamNN_vK.mp4／.mov'))
-            continue
-        team, version = m.group(1).lower(), int(m.group(2))
-        if args.only and team != args.only.lower():
-            continue
+    items, rows = find_sources(args.src)   # rows：（檔名, 結果, 說明）
+    if args.only:
+        items = [it for it in items if it['team'] == args.only.lower()]
+    for it in items:
+        it['sha'] = sha256_of(it['path'])
+    # 「專題組／創意組」資料夾：同一組這次有兩支以上不同的新檔案 → 不知道要用哪一支，全部擋下
+    fresh: dict[str, set[str]] = {}
+    for it in items:
+        if it['version'] is None and it['sha'] not in by_sha:
+            fresh.setdefault(it['team'], set()).add(it['sha'])
+    seen_sha: set[str] = set()
+    for it in items:
+        path, team, sha, label = it['path'], it['team'], it['sha'], it['label']
         t0 = time.time()
-        sha = sha256_of(path)
         if sha in by_sha:
             old = by_sha[sha]
-            note = '已處理過' if (old['team'], old['version']) == (team, version) else f'和 {old["team"]}_v{old["version"]} 是同一支檔案'
-            rows.append((path.name, '略過', note))
+            same = old['team'] == team and (it['version'] is None or old['version'] == it['version'])
+            rows.append((label, '略過', f'已處理過（{old["team"]}_v{old["version"]}）' if same else f'和 {old["team"]}_v{old["version"]} 是同一支檔案'))
             continue
+        if sha in seen_sha:
+            rows.append((label, '略過', '和這次另一支檔案內容相同'))
+            continue
+        seen_sha.add(sha)
+        if it['version'] is None and len(fresh.get(team, ())) > 1:
+            rows.append((label, '錯誤', f'{it["no"]} 這次有 {len(fresh[team])} 支不同的檔案，請只留一支（其他移到「不使用」資料夾）'))
+            continue
+        if it['version'] is None:   # 專N／創N：新的一組是 v1；已經有版本就是補件（下一個版本）
+            it['version'] = max([v['version'] for v in manifest['versions'] if v['team'] == team] or [0]) + 1
+        version = it['version']
         if (team, version) in by_key:
-            rows.append((path.name, '錯誤', f'{team}_v{version} 已經有別的檔案；補件請改用新的版本號（例如 _v{version + 1}）'))
+            rows.append((label, '錯誤', f'{team}_v{version} 已經有別的檔案；補件請改用新的版本號（例如 _v{version + 1}）'))
             continue
+        if it.get('no'):
+            label = f'{label} → {team}_v{version}'
 
         info, problems = check_source(path, limits=not args.no_limits)
         warnings = info.get('warnings', [])
         entry = {
             'team': team, 'version': version, 'source_filename': path.name, 'source_sha256': sha,
+            'title': it.get('title'), 'category': it.get('category'),
             'source_size': info.get('source_size'), 'duration_sec': info.get('duration_sec'),
             'container': info.get('container'), 'vcodec': info.get('vcodec'), 'acodec': info.get('acodec'),
             'width': info.get('width'), 'height': info.get('height'), 'rotation': info.get('rotation', 0),
@@ -286,16 +357,16 @@ def main(argv: list[str] | None = None) -> int:
         entry['processed_at'] = dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds')
         secs = time.time() - t0
         if args.check_only:
-            rows.append((path.name, '合格' if not problems else '不合格', '；'.join(problems) or f'長度 {fmt_dur(info.get("duration_sec"))}，{info.get("vcodec")}／{info.get("acodec")}，{info.get("width")}x{info.get("height")}' + (f'，{warn_text}' if warn_text else '')))
+            rows.append((label, '合格' if not problems else '不合格', '；'.join(problems) or f'長度 {fmt_dur(info.get("duration_sec"))}，{info.get("vcodec")}／{info.get("acodec")}，{info.get("width")}x{info.get("height")}' + (f'，{warn_text}' if warn_text else '')))
             continue
         manifest['versions'].append(entry)
         by_sha[sha] = entry
         by_key[(team, version)] = entry
         save_manifest(manifest_path, manifest)   # 每處理完一支就存檔，中途中斷也不會遺失
         if entry['check_ok']:
-            rows.append((path.name, '完成', f'長度 {fmt_dur(entry["duration_sec"])}，原檔 {entry["source_size"] / 1048576:.0f} MB → 播放版 {entry["playback_size"] / 1048576:.1f} MB（{entry["playback_width"]}x{entry["playback_height"]}），{secs:.0f} 秒' + (f'；{warn_text}' if warn_text else '')))
+            rows.append((label, '完成', f'長度 {fmt_dur(entry["duration_sec"])}，原檔 {entry["source_size"] / 1048576:.0f} MB → 播放版 {entry["playback_size"] / 1048576:.1f} MB（{entry["playback_width"]}x{entry["playback_height"]}），{secs:.0f} 秒' + (f'；{warn_text}' if warn_text else '')))
         else:
-            rows.append((path.name, '不合格', entry['check_notes']))
+            rows.append((label, '不合格', entry['check_notes']))
 
     print('\n影片處理報告')
     print('─' * 60)
@@ -306,7 +377,7 @@ def main(argv: list[str] | None = None) -> int:
     print('─' * 60)
     if not args.check_only and any(s in ('完成', '不合格') for _, s, _ in rows):
         print('清單已更新：' + str(manifest_path.relative_to(ROOT) if manifest_path.is_relative_to(ROOT) else manifest_path))
-        print('確認無誤後再 git add videos 並推送；推送後到後台按「同步影片清單」。')
+        print('確認無誤後推送（轉檔.bat 會詢問；推送＝公開）；推送後到後台按「同步影片清單」，勾選要建立的組別。')
     return 1 if any(s == '錯誤' for _, s, _ in rows) else 0
 
 

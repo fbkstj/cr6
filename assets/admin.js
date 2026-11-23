@@ -1,7 +1,7 @@
 // 主辦方後台（P3：競賽階段、作品與影片、評審與帳號、評分表、競賽設定、操作紀錄）
 import { call, requireRole, logout, esc, fmtTime, fmtDur, fmtSec, fmtSize, toLocalInput, fromLocalInput,
   toast, dialog, dialogValues, confirmBox, busy, devBanner } from './app.js';
-import { fromRanking, mountSheetPanel } from './sheet.js?v=20261123i';
+import { fromRanking, mountSheetPanel } from './sheet.js?v=20261123j';
 import { splitAiJson } from './aifile.js';
 
 const $ = s => document.querySelector(s);
@@ -118,13 +118,13 @@ function convertCard() {
       <tbody>
         <tr><th style="width:9em">學生原始檔</th><td><code>${esc(RAW_DIR)}</code>
           <button class="btn small" data-act="copy-text" data-text="${esc(RAW_DIR)}">複製位置</button>
-          <br><span class="muted small">Google 雲端硬碟（電腦版磁碟代號依電腦而定）。原始檔不公開、不推送。檔名改成 <code>team01_v1.mp4</code>（補件 <code>team01_v2.mp4</code>），原檔名記在同資料夾的 <code>對照表.txt</code></span></td></tr>
+          <br><span class="muted small">Google 雲端硬碟（電腦版磁碟代號依電腦而定）。原始檔不公開、不推送。放在任何一層的「專題組」「創意組」資料夾，檔名 <code>專1_作品名稱.mp4</code>、<code>創3_作品名稱.mov</code>，不用改名（專N＝team0N、創N＝team5N；同一組再放新的檔案＝補件；不要的檔案移到「不使用」資料夾）</span></td></tr>
         <tr><th>評審用播放版</th><td><code>專題製作評分 › videos</code>
           ${gh ? `<a class="btn small" href="${esc(gh)}" target="_blank" rel="noopener">瀏覽資料夾</a>` : ''}
           <br><span class="muted small">推送後放在公開網站，評審評分時播放這裡的檔案；清單是 <code>videos/manifest.json</code></span></td></tr>
-        <tr><th>原始檔檢查</th><td>MP4／MOV、有影像也有聲音、長度不超過 10:00、檔案不超過 500 MB、可以完整解碼</td></tr>
+        <tr><th>原始檔檢查</th><td>MP4／MOV、有影像也有聲音、檔案不超過 3 GB、可以完整解碼（不限長度）</td></tr>
         <tr><th>播放版規格</th><td>H.264＋AAC 的 MP4；保留原檔解析度（最高 1080p，不放大）、直式影片自動轉正；每支 75 MB 以內（影片太長、碼率不夠時才降到 720p／480p）</td></tr>
-        <tr><th>誰來轉檔</th><td>請 Claude 在主辦方電腦執行 <code>python tools/process_videos.py</code>（先 <code>--check-only</code> 盤點）→ 經老師同意推送 → 本頁或「作品與影片」按「同步影片清單」</td></tr>
+        <tr><th>怎麼轉檔</th><td>在主辦方電腦雙擊專案資料夾的 <code>轉檔.bat</code>：按 [2] 轉檔 → 確認後按 Y 推送（＝公開）→ 等 1～2 分鐘，按本頁的「同步影片清單」，勾選要建立的組別（作品名稱、組別自動帶入）。也可以請 Claude 代為執行</td></tr>
       </tbody></table></div>
     <div class="row" style="justify-content:space-between"><b>盤點結果（已轉檔的版本）</b>
       <button class="btn small" data-act="sync">同步影片清單</button></div>
@@ -147,10 +147,11 @@ async function fillInventory() {
   box.className = 'stack';
   box.innerHTML = `<p class="muted small" style="margin:0">共 ${list.length} 個版本：合格 ${ok}、不合格 ${list.length - ok}；已同步到系統 ${list.filter(v => synced.has(`${v.team}_v${v.version}`)).length}。</p>
     <div class="table-wrap"><table>
-    <thead><tr><th>版本</th><th>原始檔</th><th>長度</th><th>原始解析度</th><th>原檔檢查</th><th>播放版</th><th>系統</th></tr></thead>
+    <thead><tr><th>版本</th><th>作品</th><th>原始檔</th><th>長度</th><th>原始解析度</th><th>原檔檢查</th><th>播放版</th><th>系統</th></tr></thead>
     <tbody>${list.map(v => {
       const key = `${v.team}_v${v.version}`;
       return `<tr><td><b>${esc(key)}</b></td>
+        <td class="small">${v.category ? esc(CAT_LABEL[v.category] || '') + '<br>' : ''}${esc(v.title || '')}</td>
         <td class="small">${esc(v.source_filename)}<br><span class="muted">${fmtSize(v.source_size)}</span></td>
         <td>${fmtDur(v.duration_sec)}</td><td class="small">${res(v.width, v.height)}</td>
         <td>${v.check_ok ? chip('合格', 'ok') : chip('不合格', 'bad') + `<br><span class="small">${esc(v.check_notes)}</span>`}</td>
@@ -263,6 +264,61 @@ async function newTeam() {
   if (!ok) return;
   const r = await busy(null, () => call('adminUpsertTeam', { code: dialogValues['nt-code'], name: dialogValues['nt-name'], workTitle: dialogValues['nt-title'], category: dialogValues['nt-cat'] }));
   if (r) { S.teamId = r.id; toast('已新增組別'); await refresh(); }
+}
+
+/** 組別代碼 → 預設組別名稱：team01＝專1、team51＝創1（轉檔腳本的編號規則） */
+function defaultTeamName(code, category) {
+  const n = Number(String(code).replace(/\D/g, ''));
+  if (category === 'creative' && n > 50) return '創' + (n - 50);
+  if (category === 'project' && n < 50) return '專' + n;
+  return '';
+}
+
+/** 同步前：影片清單裡有、系統裡還沒有的組別，列出來讓主辦人員勾選後自動建立（作品名稱、組別取自清單）。
+ *  回傳 false＝按了取消（不同步） */
+async function createMissingTeams(btn) {
+  let list;
+  try {
+    const r = await fetch('videos/manifest.json?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    list = (await r.json()).versions || [];
+  } catch (e) { return true; }   // 讀不到清單就照原本的同步（伺服器會再讀一次並回報）
+  const have = new Set(S.board.teams.map(t => t.code));
+  const missing = new Map();
+  list.filter(v => v.check_ok && !have.has(v.team)).forEach(v => {
+    const old = missing.get(v.team);
+    if (!old || v.version > old.version) missing.set(v.team, v);
+  });
+  if (!missing.size) return true;
+  const rows = [...missing.values()].sort((a, b) => a.team.localeCompare(b.team));
+  const ans = await dialog(`<h2 class="dlg-wide">同步影片清單：建立組別</h2>
+    <p class="small" style="margin:0">影片清單裡有 ${rows.length} 個組別還沒建立。作品名稱、組別已經從檔名與資料夾帶入，可以直接修改；不要建立的選「略過」。</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>建立</th><th>代碼</th><th>組別名稱</th><th>作品名稱</th><th>類別</th></tr></thead>
+      <tbody>${rows.map(v => {
+        const cat = v.category === 'creative' ? 'creative' : 'project';
+        return `<tr><td><select id="mk-${esc(v.team)}" style="min-width:5.5em"><option value="1">建立</option><option value="">略過</option></select></td>
+          <td><b>${esc(v.team)}</b></td>
+          <td><input id="mn-${esc(v.team)}" type="text" maxlength="60" style="width:6em" value="${esc(defaultTeamName(v.team, v.category))}"></td>
+          <td><input id="mt-${esc(v.team)}" type="text" maxlength="100" style="min-width:14em" value="${esc(v.title || '')}"></td>
+          <td><select id="mc-${esc(v.team)}" style="min-width:6.5em">${catOptions(cat)}</select></td></tr>`;
+      }).join('')}</tbody></table></div>`,
+  [{ label: '取消', value: 'cancel' }, { label: '不建立，只同步', value: 'skip' }, { label: '建立組別並同步', value: 'create', primary: true }]);
+  if (ans === 'skip') return true;
+  if (ans !== 'create') return false;
+  const vals = { ...dialogValues };
+  const failed = [];
+  if (btn) btn.disabled = true;
+  try {
+    for (const v of rows) {
+      if (!vals['mk-' + v.team]) continue;
+      try {
+        await call('adminUpsertTeam', { code: v.team, name: vals['mn-' + v.team], workTitle: vals['mt-' + v.team], category: vals['mc-' + v.team] });
+      } catch (e) { failed.push(`${v.team}：${e.message}`); }
+    }
+  } finally { if (btn) btn.disabled = false; }
+  if (failed.length) toast('有組別沒有建立成功：' + failed.join('；'), 'bad');
+  return true;
 }
 
 /* ───────────── 評分進度（P4） ───────────── */
@@ -926,6 +982,7 @@ main.addEventListener('click', async e => {
       if (await busy(el, () => call('adminDeleteTeam', id))) { S.teamId = null; toast('已刪除'); await refresh(); }
       break;
     case 'sync': {
+      if (beforeJudging() && !(await createMissingTeams(el))) return;
       const r = await busy(el, () => call('adminSyncVideos'));
       if (!r) return;
       await refresh();
