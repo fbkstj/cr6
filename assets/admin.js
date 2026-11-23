@@ -1,7 +1,7 @@
-// 主辦方後台（P3：總覽、作品與影片、評審與帳號、評分表、競賽設定、操作紀錄）
+// 主辦方後台（P3：競賽階段、作品與影片、評審與帳號、評分表、競賽設定、操作紀錄）
 import { call, requireRole, logout, esc, fmtTime, fmtDur, fmtSec, fmtSize, toLocalInput, fromLocalInput,
   toast, dialog, dialogValues, confirmBox, busy, devBanner } from './app.js';
-import { fromRanking, mountSheetPanel } from './sheet.js?v=20261123g';
+import { fromRanking, mountSheetPanel } from './sheet.js?v=20261123h';
 import { splitAiJson } from './aifile.js';
 
 const $ = s => document.querySelector(s);
@@ -51,7 +51,7 @@ function render() {
   if (typeof out === 'string') main.innerHTML = out;
 }
 
-/* ───────────── 總覽 ───────────── */
+/* ───────────── 競賽階段 ───────────── */
 function viewOverview() {
   const c = S.board.competition, teams = S.board.teams;
   const idx = PHASES.findIndex(p => p[0] === c.phase);
@@ -209,7 +209,7 @@ function viewScores() {
   main.innerHTML = '<div class="card"><p class="muted">載入中…</p></div>';
   call('adminListScores').then(r => {
     if (!r.rows.length) {
-      main.innerHTML = `<div class="card notice">${['setup', 'collecting'].includes(r.phase) ? '還沒有開始評分。影片收齊、設好正式版本後，到「總覽」按「開始評分」。' : '沒有進入評分的作品。'}</div>`;
+      main.innerHTML = `<div class="card notice">${['setup', 'collecting'].includes(r.phase) ? '還沒有開始評分。影片收齊、設好正式版本後，到「競賽階段」按「開始評分」。' : '沒有進入評分的作品。'}</div>`;
       return;
     }
     const pct = Math.round(r.completeWorks / r.totalWorks * 100);
