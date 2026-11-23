@@ -231,11 +231,15 @@ export async function downloadPdf(sheets, filename) {
     await window.html2pdf().set({
       margin: 15, filename,
       image: { type: 'jpeg', quality: 0.98 },
-      // windowWidth 要等於內容區寬，否則 html2pdf 會把內容置中而往右偏、右邊被裁掉
       html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', windowWidth: PAGE_W, scrollX: 0, scrollY: 0 },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
       pagebreak: { mode: ['css'], before: '.sheet-brk', avoid: 'tr' },
-    }).from(box).save();
+    }).from(box).toContainer().then(function () {
+      // html2pdf 的容器預設在整個視窗置中（margin:auto），但 html2canvas 用 windowWidth（內容區寬）排版，
+      // 視窗比內容區寬時兩邊的位置對不上，內容會往左偏「(視窗寬−內容寬)/2」、左邊被裁掉。改成貼齊左邊就與視窗寬度無關。
+      const c = this.prop.container;
+      c.style.left = '0'; c.style.right = 'auto'; c.style.margin = '0';
+    }).save();
   } finally { host.remove(); cover.remove(); window.scrollTo(0, oldY); }
 }
 
