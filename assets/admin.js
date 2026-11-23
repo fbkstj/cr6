@@ -1,7 +1,7 @@
 // 主辦方後台（P3：競賽階段、作品與影片、評審與帳號、評分表、競賽設定、操作紀錄）
 import { call, requireRole, logout, esc, fmtTime, fmtDur, fmtSec, fmtSize, toLocalInput, fromLocalInput,
   toast, dialog, dialogValues, confirmBox, busy, devBanner } from './app.js';
-import { fromRanking, mountSheetPanel } from './sheet.js?v=20261123j';
+import { fromRanking, mountSheetPanel } from './sheet.js?v=20261123k';
 import { splitAiJson } from './aifile.js';
 
 const $ = s => document.querySelector(s);
@@ -78,7 +78,7 @@ function viewOverview() {
     <div class="steps">${PHASES.map((p, i) => `<span class="${i < idx ? 'done' : i === idx ? 'now' : ''}">${i < idx ? '✓ ' : ''}${p[1]}</span>`).join('')}</div>
     <div class="row">${actions}</div>
   </div>
-  ${beforeJudging() ? convertCard() : ''}
+  ${beforeJudging() ? guideCard(c.phase) + convertCard() : ''}
   <div class="card stack">
     <h2>作品狀態</h2>
     <div class="stats">
@@ -102,6 +102,40 @@ function viewOverview() {
   </div>`;
 }
 
+/* 操作步驟：轉檔、檢核階段在「競賽階段」分頁顯示一步一步的做法（目前階段的步驟展開，另一個收合） */
+const kbd = k => `<kbd>${k}</kbd>`;
+function convertSteps() {
+  return `<ol class="howto">
+    <li><b>放影片</b>：把學生交的影片放進雲端硬碟 <code>${esc(RAW_DIR)}</code> 裡的「<b>專題組</b>」「<b>創意組</b>」資料夾（可以再包一層，例如「115全國專題製作競賽校內初賽／專題組」）。
+      <div class="tip">檔名照學生交的樣子，開頭是編號：<code>專1_作品名稱.mp4</code>、<code>創3_作品名稱.mov</code>，不用改名。專N 會變成組別代碼 team0N、創N 變成 team5N。
+      同一組有兩支檔案時，只留一支，其他移到「<b>不使用</b>」資料夾；之後要補件，就在同一個資料夾再放一支新的（自動成為第 2 版）。</div></li>
+    <li><b>檢查</b>：在主辦方電腦打開專案資料夾，雙擊 <code>轉檔.bat</code>，輸入 ${kbd('1')} 按 ${kbd('Enter')}。
+      <div class="tip">每支影片都會完整讀一遍，13 支大約十幾分鐘。報告裡「合格」可以轉檔；「不合格」「錯誤」後面會寫原因（例如沒有聲音、同一組有兩支檔案），處理好再檢查一次。</div></li>
+    <li><b>轉檔＋推送</b>：回到選單輸入 ${kbd('2')} 按 ${kbd('Enter')} 開始轉檔。轉完會列出要推送的影片，確認後輸入 ${kbd('Y')} 按 ${kbd('Enter')}，影片就會推送到網站。
+      <div class="tip">轉檔時間大約是影片長度的 0.5～1 倍（13 支約 1～2 小時）；中途關掉視窗沒關係，下次會從沒轉完的繼續。<b>推送＝公開到網站</b>，不想推送就輸入 ${kbd('N')}，之後再選 ${kbd('3')} 推送。最後按 ${kbd('Enter')} 關閉視窗。</div></li>
+    <li><b>同步到系統</b>：推送後等 1～2 分鐘，按下方的 <button class="btn small" data-act="sync">同步影片清單</button>。還沒建立的組別會列出來（組別名稱、作品名稱、類別已自動帶入，可以修改；不要的選「略過」），按「<b>建立組別並同步</b>」。
+      <div class="tip">下方「盤點結果」全部顯示「已同步」就完成了。按了沒有新版本，通常是網站還沒更新完，稍等一下再按一次。</div></li>
+    <li><b>進入檢核</b>：按上方的「<b>進入檢核</b>」。</li>
+  </ol>
+  <p class="tip" style="margin:0">⚠ 兩台電腦共用雲端硬碟時，只在<b>一台</b>電腦執行 <code>轉檔.bat</code>，而且等雲端硬碟同步完成再執行。畫面有錯誤訊息時，截圖給 Claude 處理。</p>`;
+}
+function reviewSteps() {
+  return `<ol class="howto">
+    <li><b>看影片、設正式版本</b>：到「<a href="#" data-act="goto" data-tab="works">作品與影片</a>」，逐組點開播放版檢查，沒問題就按「<b>設為正式版本</b>」。每一組都要設，沒設正式版本的組別不會進入評分。</li>
+    <li><b>要補件或重轉</b>：照上面「轉檔」的步驟放新檔案、執行 <code>轉檔.bat</code>、推送、按「同步影片清單」，再把新版本設為正式版本。檢核階段也可以做，不必回到轉檔。</li>
+    <li><b>確認設定</b>（開始評分後就不能改）：「<a href="#" data-act="goto" data-tab="settings">競賽設定</a>」的競賽名稱、評審人數（1／3／5）、要不要加 AI；「<a href="#" data-act="goto" data-tab="judges">評審與帳號</a>」每個席位都有人；「<a href="#" data-act="goto" data-tab="rubric">評分表</a>」兩組的項目與配分。</li>
+    <li><b>開始評分</b>：按上方的「<b>開始評分（鎖定版本）…</b>」，確認進入評分的組別後送出。之後評審就可以登入評分；這一步之後不能再回到轉檔或檢核。</li>
+  </ol>`;
+}
+function guideCard(phase) {
+  const conv = phase === 'setup';
+  return `<div class="card stack">
+    <h2>操作步驟：${conv ? '轉檔' : '檢核'}</h2>
+    ${conv ? convertSteps() : reviewSteps()}
+    <details><summary>${conv ? '接下來的檢核步驟' : '轉檔步驟（補件、重轉時用）'}</summary>${conv ? reviewSteps() : convertSteps()}</details>
+  </div>`;
+}
+
 /* 轉檔：原始檔與播放版的資料夾、規格與盤點（轉檔由主辦方電腦上的 tools/process_videos.py 完成） */
 const RAW_DIR = '我的雲端硬碟 › claude › 專題製作評分 › 影片原檔';
 function repoVideosUrl() {
@@ -113,7 +147,7 @@ function convertCard() {
   const gh = repoVideosUrl();
   queueMicrotask(fillInventory);
   return `<div class="card stack">
-    <h2>轉檔：盤點學生原始檔，轉成評審用的播放版</h2>
+    <h2>轉檔資料：資料夾位置、規格與盤點</h2>
     <div class="table-wrap"><table>
       <tbody>
         <tr><th style="width:9em">學生原始檔</th><td><code>${esc(RAW_DIR)}</code>
@@ -124,7 +158,6 @@ function convertCard() {
           <br><span class="muted small">推送後放在公開網站，評審評分時播放這裡的檔案；清單是 <code>videos/manifest.json</code></span></td></tr>
         <tr><th>原始檔檢查</th><td>MP4／MOV、有影像也有聲音、檔案不超過 3 GB、可以完整解碼（不限長度）</td></tr>
         <tr><th>播放版規格</th><td>H.264＋AAC 的 MP4；保留原檔解析度（最高 1080p，不放大）、直式影片自動轉正；每支 75 MB 以內（影片太長、碼率不夠時才降到 720p／480p）</td></tr>
-        <tr><th>怎麼轉檔</th><td>在主辦方電腦雙擊專案資料夾的 <code>轉檔.bat</code>：按 [2] 轉檔 → 確認後按 Y 推送（＝公開）→ 等 1～2 分鐘，按本頁的「同步影片清單」，勾選要建立的組別（作品名稱、組別自動帶入）。也可以請 Claude 代為執行</td></tr>
       </tbody></table></div>
     <div class="row" style="justify-content:space-between"><b>盤點結果（已轉檔的版本）</b>
       <button class="btn small" data-act="sync">同步影片清單</button></div>
