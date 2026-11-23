@@ -1,7 +1,7 @@
 // 主辦方後台（P3：競賽階段、作品與影片、評審與帳號、評分表、競賽設定、操作紀錄）
 import { call, requireRole, logout, esc, fmtTime, fmtDur, fmtSec, fmtSize, toLocalInput, fromLocalInput,
   toast, dialog, dialogValues, confirmBox, busy, devBanner } from './app.js';
-import { fromRanking, mountSheetPanel } from './sheet.js?v=20261123k';
+import { fromRanking, mountSheetPanel } from './sheet.js?v=20261123m';
 import { splitAiJson } from './aifile.js';
 
 const $ = s => document.querySelector(s);
@@ -114,7 +114,7 @@ function convertSteps() {
     <li><b>轉檔＋推送</b>：回到選單輸入 ${kbd('2')} 按 ${kbd('Enter')} 開始轉檔。轉完會列出要推送的影片，確認後輸入 ${kbd('Y')} 按 ${kbd('Enter')}，影片就會推送到網站。
       <div class="tip">轉檔時間大約是影片長度的 0.5～1 倍（13 支約 1～2 小時）；中途關掉視窗沒關係，下次會從沒轉完的繼續。<b>推送＝公開到網站</b>，不想推送就輸入 ${kbd('N')}，之後再選 ${kbd('3')} 推送。最後按 ${kbd('Enter')} 關閉視窗。</div></li>
     <li><b>同步到系統</b>：推送後等 1～2 分鐘，按下方的 <button class="btn small" data-act="sync">同步影片清單</button>。還沒建立的組別會列出來（組別名稱、作品名稱、類別已自動帶入，可以修改；不要的選「略過」），按「<b>建立組別並同步</b>」。
-      <div class="tip">下方「盤點結果」全部顯示「已同步」就完成了。按了沒有新版本，通常是網站還沒更新完，稍等一下再按一次。</div></li>
+      <div class="tip">「作品與影片」分頁的「⚡ 快速帶入」是同一個功能。下方「盤點結果」全部顯示「已同步」就完成了。按了沒有新版本，通常是網站還沒更新完，稍等一下再按一次。</div></li>
     <li><b>進入檢核</b>：按上方的「<b>進入檢核</b>」。</li>
   </ol>
   <p class="tip" style="margin:0">⚠ 兩台電腦共用雲端硬碟時，只在<b>一台</b>電腦執行 <code>轉檔.bat</code>，而且等雲端硬碟同步完成再執行。畫面有錯誤訊息時，截圖給 Claude 處理。</p>`;
@@ -217,13 +217,15 @@ function viewWorks() {
     <div class="row" style="padding:12px;justify-content:space-between">
       <b>組別</b>
       <span class="row">
-        <button class="btn small" data-act="sync">同步影片清單</button>
-        ${beforeJudging() ? '<button class="btn small" data-act="new-team">＋ 新增</button>' : ''}
+        ${beforeJudging()
+          ? `<button class="btn small primary" data-act="sync" title="讀取已推送的影片清單：還沒建立的組別自動帶入組別名稱、作品名稱、類別，確認後建立並登錄影片">⚡ 快速帶入</button>
+             <button class="btn small" data-act="new-team">＋ 新增</button>`
+          : '<button class="btn small" data-act="sync">同步影片清單</button>'}
       </span>
     </div>
     <ul class="list">${teams.map(x => `<li><button data-act="open-team" data-id="${x.id}" aria-current="${x.id === S.teamId}">
       <span><b>${esc(x.code)}</b> ${esc(x.name)}<br><span class="muted small">${esc(x.categoryLabel)}・${esc(x.workTitle) || '（未填作品名稱）'}</span></span>
-      ${chip(x.status.label, STATUS_CHIP[x.status.key])}</button></li>`).join('') || '<li class="muted" style="padding:12px">還沒有組別，請先新增</li>'}</ul>
+      ${chip(x.status.label, STATUS_CHIP[x.status.key])}</button></li>`).join('') || `<li class="muted small" style="padding:12px">還沒有組別。轉檔並推送影片後，按「⚡ 快速帶入」：組別名稱、作品名稱、類別會從影片清單自動帶入，確認後一次建立並登錄影片。${beforeJudging() ? '也可以按「＋ 新增」手動建立。' : ''}</li>`}</ul>
   </div>`;
   return `<div class="split">${list}<div>${t ? teamDetail(t) : '<div class="card muted">請在左邊選擇組別</div>'}</div></div>`;
 }
@@ -260,7 +262,7 @@ function teamDetail(t) {
           <button class="btn small" data-act="open-version" data-id="${x.id}">檢視</button>
           ${!locked && x.checkOk && x.id !== t.currentVersionId ? `<button class="btn small" data-act="set-current" data-id="${x.id}">設為正式版本</button>` : ''}
         </div></td></tr>`).join('')}</tbody></table></div>`
-    : '<p class="muted">還沒有影片。把影片依規則命名放進「影片原檔」，轉檔並推送後，按「同步影片清單」（見「競賽階段」的轉檔說明）。</p>'}
+    : '<p class="muted">還沒有影片。把影片放進「影片原檔」的「專題組」「創意組」資料夾，用 轉檔.bat 轉檔並推送後，按左上的「⚡ 快速帶入」（步驟見「競賽階段」的操作步驟）。</p>'}
   </div>
   ${v ? versionDetail(t, v) : ''}`;
 }
@@ -324,7 +326,7 @@ async function createMissingTeams(btn) {
   });
   if (!missing.size) return true;
   const rows = [...missing.values()].sort((a, b) => a.team.localeCompare(b.team));
-  const ans = await dialog(`<h2 class="dlg-wide">同步影片清單：建立組別</h2>
+  const ans = await dialog(`<h2 class="dlg-wide">快速帶入：建立組別</h2>
     <p class="small" style="margin:0">影片清單裡有 ${rows.length} 個組別還沒建立。作品名稱、組別已經從檔名與資料夾帶入，可以直接修改；不要建立的選「略過」。</p>
     <div class="table-wrap"><table>
       <thead><tr><th>建立</th><th>代碼</th><th>組別名稱</th><th>作品名稱</th><th>類別</th></tr></thead>
@@ -1019,7 +1021,7 @@ main.addEventListener('click', async e => {
       const r = await busy(el, () => call('adminSyncVideos'));
       if (!r) return;
       await refresh();
-      await dialog(`<h2>同步影片清單</h2>
+      await dialog(`<h2>快速帶入／同步影片清單：結果</h2>
         <p>新增 ${r.added.length} 個版本，已存在 ${r.skipped} 個。</p>
         ${r.added.length ? `<ul>${r.added.map(a => `<li>${esc(a.label)} ${a.checkOk ? chip('合格', 'ok') : chip('不合格', 'bad') + ' ' + esc(a.notes)}</li>`).join('')}</ul>` : ''}
         ${r.warnings.length ? `<div class="notice warn"><b>需要處理：</b><ul style="margin:.4em 0 0 1.2em;padding:0">${r.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></div>` : ''}`,
