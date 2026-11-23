@@ -205,6 +205,12 @@ def main() -> int:
         ok('測試模式：10:01 的影片照樣轉檔，清單註記「測試模式未擋」')
         pv.MAX_DURATION_SEC = default_limit
 
+        # 解碼檢查放寬：時間戳記不連續的警告不算錯誤，其他錯誤照樣擋
+        benign = 'Application provided invalid, non monotonically increasing dts to muxer in stream 0: 1205 >= 1205'
+        assert pv.serious_decode_errors([benign, '[null @ 0x1] Non-monotonous DTS in output stream 0:1', '  ']) == []
+        assert pv.serious_decode_errors([benign, '[h264 @ 0x2] error while decoding MB 10 20']) == ['[h264 @ 0x2] error while decoding MB 10 20']
+        ok('解碼檢查：時間戳記不連續的警告放寬，真正的解碼錯誤照樣擋')
+
         # 預設（不限長度）：10:01 照樣收、不註記
         dl_src, dl_out = tmp / 'deflimit', tmp / 'deflimit_out'
         dl_src.mkdir()

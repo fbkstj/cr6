@@ -118,6 +118,16 @@ def find_sources(src: Path) -> tuple[list[dict], list[tuple[str, str, str]]]:
     return items, rows
 
 
+# 完整解碼時可以放寬的 ffmpeg 訊息：時間戳記不連續（手機錄影、剪輯軟體匯出常見，畫面與聲音本身沒壞）。
+# 老師 2026-11-23 決定放寬（創5 的 .MOV 因此被擋）；轉檔後仍會驗證播放版長度、音軌與影音長度一致。
+BENIGN_DECODE_RE = re.compile(r'non[- ]?monoton\w*(?: increasing)? dts|non-monotonous dts', re.IGNORECASE)
+
+
+def serious_decode_errors(lines: list[str]) -> list[str]:
+    """解碼錯誤訊息裡，去掉可以放寬的時間戳記警告，剩下的才算影片有問題"""
+    return [ln for ln in lines if ln.strip() and not BENIGN_DECODE_RE.search(ln)]
+
+
 def run(cmd: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
 
@@ -200,9 +210,12 @@ def check_source(path: Path, limits: bool = True) -> tuple[dict, list[str]]:
     if not problems:
         # 完整解碼一次，確認中間沒有壞掉的片段
         r = run(['ffmpeg', '-v', 'error', '-nostdin', '-i', str(path), '-map', '0:v:0', '-map', '0:a:0', '-f', 'null', '-'])
-        errors = [ln for ln in r.stderr.splitlines() if ln.strip()]
+        lines = [ln for ln in r.stderr.splitlines() if ln.strip()]
+        errors = serious_decode_errors(lines)
         if r.returncode != 0 or errors:
             problems.append('解碼時發生錯誤：' + (errors[0][:120] if errors else f'結束碼 {r.returncode}'))
+        elif lines:
+            info['notes'] = [f'解碼時有 {len(lines)} 則時間戳記不連續的警告（已放寬；播放版已驗證長度與影音一致）']
     return info, problems
 
 
@@ -242,6 +255,10 @@ def make_playback(src: Path, dst: Path, source_duration: float, src_short: int =
             continue
         if not has_audio:
             last_problem = '播放版沒有聲音'
+            continue
+        durs = {st.get('codec_type'): float(st.get('duration') or 0) for st in p.get('streams', []) if st.get('codec_type') in ('video', 'audio')}
+        if durs.get('video') and durs.get('audio') and abs(durs['video'] - durs['audio']) > DURATION_TOLERANCE:
+            last_problem = f'播放版影像 {durs["video"]:.2f} 秒與聲音 {durs["audio"]:.2f} 秒長度不一致'
             continue
         if size > MAX_OUTPUT_MB * 1024 * 1024:
             last_problem = f'播放版 {size / 1024 / 1024:.0f} MB，超過 {MAX_OUTPUT_MB} MB'
@@ -341,7 +358,7 @@ def main(argv: list[str] | None = None) -> int:
             'width': info.get('width'), 'height': info.get('height'), 'rotation': info.get('rotation', 0),
             'check_ok': not problems, 'check_notes': '；'.join(problems), 'playback_path': None, 'playback_size': None,
         }
-        warn_text = ('（測試模式未擋）' + '；'.join(warnings)) if warnings else ''
+        warn_text = '；'.join(info.get('notes', []) + ([('（測試模式未擋）' + '；'.join(warnings))] if warnings else []))
         if not problems and warn_text:
             entry['check_notes'] = warn_text
         if not problems and not args.check_only:
