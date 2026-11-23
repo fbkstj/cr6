@@ -1,7 +1,7 @@
 // 主辦方後台（P3：競賽階段、作品與影片、評審與帳號、評分表、競賽設定、操作紀錄）
 import { call, requireRole, logout, esc, fmtTime, fmtDur, fmtSec, fmtSize, toLocalInput, fromLocalInput,
   toast, dialog, dialogValues, confirmBox, busy, devBanner } from './app.js';
-import { fromRanking, mountSheetPanel } from './sheet.js?v=20261123o';
+import { fromRanking, mountSheetPanel } from './sheet.js?v=20261123p';
 import { splitAiJson } from './aifile.js';
 
 const $ = s => document.querySelector(s);
@@ -541,7 +541,7 @@ function drawAi() {
       <div class="row"><button class="btn" data-act="ai-copy-prompt" data-cat="all">複製 AI 評分提示詞</button>${d.canImport && drafts.length ? `<button class="btn primary" data-act="ai-adopt-all">全部送出（${drafts.length} 件暫存）</button>` : ''}${d.canImport ? `<button class="btn ${drafts.length ? '' : 'primary'}" data-act="ai-import">匯入 AI 評分檔…</button>` : ''}</div></div>
     ${head}
     <p class="muted small" style="margin:0">AI 評分在系統外完成：按標題列的「複製 AI 評分提示詞」（已帶入全部作品的影片網址）貼到外部 AI，AI 會輸出一個合併的 JSON（專題組、創意組在一起），存成一個檔案，再按「匯入 AI 評分檔」；也可以每組單獨評：按該組的「複製提示詞」，每組存成一個 JSON 檔（檔名含組別，例如 team01.json）。<br>
-      可以先「暫存」（只看、不計入平均），看過（可以按「修改」調整）再按「送出」才算成一位評審；也可以直接送出。有項目判斷不了或格式不對時標成「需要處理」，可以重新匯入，或由主辦人員補分並寫理由。合併檔的格式見 tools/README.md。</p>
+      可以先「暫存」（只看、不計入平均），看過（可以按「修改」調整）再按「送出」才算成一位評審；也可以直接送出。有項目判斷不了或格式不對時標成「需要處理」，可以重新匯入，或由主辦人員補分並寫理由。合併檔的格式見 tools/README.md。<br>「複製 AI 評分提示詞」（全部作品）已要求 AI 在專題組、創意組各自內不要同分、要分出高下；每組單獨評的提示詞看不到其他組，無法做到，同分時由結算頁的同分處理決定名次。</p>
   </div>
   <div class="card">
     <div class="table-wrap"><table>
@@ -665,6 +665,7 @@ function aiPromptAll() {
     '4. 每一項必須附 1～3 個影片時間點作為依據，time 格式為「分:秒」（單一時間點，例如 "0:45"、"3:15"，不可寫區間，且不可超過該影片總長度）。',
     `5. strengths（作品優點）與 improvements（改進建議）請使用繁體中文，各 ${min}～300 字，必須具體指出影片內容。`,
     '6. 只能輸出「一個合法的 JSON 物件」（所有作品合在同一個），前後不可有任何說明文字，也不可加上 ```json 或 ``` 標記。',
+    '7. 必須分出高下：同一個組別（專題組、創意組各自）內，任兩件作品的 total 不可相同。先比較同組所有作品的整體表現，再給分；若初評出現同分，請依影片中的具體差異（完成度、實際展示、創意、表達）調整單項分數，直到全部不同分。調整後仍須符合第 2、3 項，不可為了拉開分數而虛構內容，每一項的理由與時間點也要和最終分數一致。',
     '',
     '輸出格式（「專題組」「創意組」各是一個陣列，每件作品一筆，依上方清單順序；team 用清單裡的代碼）：',
     `{"generated_at":"YYYY-MM-DD","rubrics":${rubricJson},"專題組":[${entry('專題組')},…],"創意組":[${entry('創意組')},…]}`,
