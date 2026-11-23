@@ -3,6 +3,7 @@
 // 版面：標題「{競賽名稱}評分表(專題組)」；欄位 編號｜題目｜各評分項目(配分%)｜總分｜評語。
 // 每一組別有一張「平均」成績表（含名次、各評審總分），以及每位評審各一張（和原 Word 檔一樣有評語欄）。
 import { esc } from './app.js';
+import { downloadDocx } from './word.js?v=20261123g';
 
 const PREFIX = { project: '專', creative: '創' };
 const PDF_LIB = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
@@ -252,7 +253,9 @@ function saveOpts(o) { try { localStorage.setItem(OPT_KEY, JSON.stringify(o)); }
 
 /** 在 container 放上「成績表」面板：成績總表（可選頁數、文字大小，A4 預覽後下載）＋每位評審的單張表 */
 export function mountSheetPanel(container, data, { onError = () => {} } = {}) {
-  const sheets = buildSheets(data).filter(s => !s.summary);   // 評審單張表
+  const all = buildSheets(data);
+  const sheets = all.filter(s => !s.summary);                  // 評審單張表
+  const summaries = all.filter(s => s.summary).map(s => s.html); // Word 版成績總表（不分頁、不縮小，由 Word 自然換頁）
   if (!data.categories.length) { container.innerHTML = ''; return; }
   const opts = loadOpts();
   let cur = -1;          // -1＝成績總表（輸出預覽）；其他＝評審單張表
@@ -282,9 +285,10 @@ export function mountSheetPanel(container, data, { onError = () => {} } = {}) {
     const onSummary = cur < 0;
     container.innerHTML = `<div class="card stack">
       <div class="row" style="justify-content:space-between"><h2 style="margin:0">成績表（評分表格式）</h2>
-        <div class="row">${onSummary ? '' : '<button class="btn" data-sheet="one">下載這一張 PDF</button>'}
-          <button class="btn primary" data-sheet="all" ${layout ? '' : 'disabled'}>下載成績總表 PDF（共 ${pageCount() || '…'} 頁）</button></div></div>
-      <p class="muted small" style="margin:0">版面比照初賽評分表：A4 橫式、標楷體、四邊留白 1.5 公分。成績總表＝各組別的各項平均、總分、名次、各評審總分與評語及建議；另有每位評審各一張，可在下方選擇後單張下載。評審只顯示編號，不顯示姓名。</p>
+        <div class="row">${onSummary ? '' : '<button class="btn" data-sheet="one">下載這一張 PDF</button><button class="btn" data-word="one">下載這一張 Word</button>'}
+          <button class="btn primary" data-sheet="all" ${layout ? '' : 'disabled'}>下載成績總表 PDF（共 ${pageCount() || '…'} 頁）</button>
+          <button class="btn" data-word="all">下載成績總表 Word</button></div></div>
+      <p class="muted small" style="margin:0">版面比照初賽評分表：A4 橫式、標楷體、四邊留白 1.5 公分。成績總表＝各組別的各項平均、總分、名次、各評審總分與評語及建議；另有每位評審各一張，可在下方選擇後單張下載。評審只顯示編號，不顯示姓名。Word 檔可自行修改：文字大小用上面選的（自動＝12pt），不自動縮小，放不下時由 Word 自然換頁、表頭每頁重複。</p>
       <div class="row sheet-opts">
         <label>每組頁數 <select data-opt="pages">${PAGE_CHOICES.map(c => `<option value="${c.v}" ${c.v === opts.pages ? 'selected' : ''}>${c.label}</option>`).join('')}</select></label>
         <label>文字大小 <select data-opt="size"><option value="0" ${!opts.size ? 'selected' : ''}>自動（盡量大，最大 12pt＝範本）</option>${SIZE_CHOICES.map(s => `<option value="${s}" ${s === opts.size ? 'selected' : ''}>${s}pt${s === 12 ? '（範本）' : ''}</option>`).join('')}</select></label>
@@ -315,6 +319,14 @@ export function mountSheetPanel(container, data, { onError = () => {} } = {}) {
   container.onclick = async e => {
     const b = e.target.closest('button'); if (!b) return;
     if (b.dataset.sheetI !== undefined) { cur = Number(b.dataset.sheetI); draw(); return; }
+    if (b.dataset.word) {
+      const allW = b.dataset.word === 'all';
+      const old = b.textContent; b.disabled = true; b.textContent = '產生 Word 中…';
+      try { await downloadDocx(allW ? summaries : [sheets[cur].html], safe(`${data.name}_成績表${allW ? '' : '_' + sheets[cur].label.replace('｜', '_')}`) + '.docx', opts.size || 12); }
+      catch (err) { onError(err); }
+      finally { b.disabled = false; b.textContent = old; }
+      return;
+    }
     if (!b.dataset.sheet) return;
     const all = b.dataset.sheet === 'all';
     if (all && !layout) return;
