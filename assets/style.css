@@ -139,29 +139,34 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 .sheet-tabs { gap: 6px; }
 .sheet-tabs .chip { cursor: pointer; border: 1px solid var(--line); background: var(--surface); font: inherit; }
 .sheet-scroll { overflow-x: auto; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
-.sheet, .sheet-pdf-root .sheet { width: 1040px; max-width: none; margin: 0 auto; background: #fff; color: #000; padding: 6px 0 10px;
-  font-family: "PMingLiU", "MingLiU", "Noto Serif TC", "Songti TC", serif; }
-.sheet-title { font-size: 22px; font-weight: 700; text-align: center; margin: 4px 0 18px; color: #000; }
-.sheet-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 15px; line-height: 1.5; }
-.sheet-table th, .sheet-table td { border: 1px solid #444; padding: 4px 6px; vertical-align: top; text-align: left; color: #000; background: #fff; word-break: break-word; }
-.sheet-table th { font-weight: 400; }
-.sheet-table .c-no { width: 44px; } .sheet-table .c-title { width: 150px; } .sheet-table .c-rank { width: 54px; }
-.sheet-table .c-total { width: 62px; } .sheet-table .c-j { width: 58px; } .sheet-table .c-item { width: 96px; }
+/* 尺寸照範本 PDF 實測（A4 橫式 841.9×595.3pt）：標楷體；標題 18pt 置中；表格 12pt、行高 18pt；
+   儲存格左右內距 5.4pt；標題列靠上、資料列垂直置中、資料列高 90pt；表格下方註記 新細明體 12pt。
+   寬度＝A4 橫式扣掉左右各 1.5cm＝267mm（PDF 四邊留白 1.5cm；1px＝0.75pt，pt 單位直接對應 PDF） */
+.sheet, .sheet-pdf-root .sheet { width: 267mm; max-width: none; margin: 0 auto; background: #fff; color: #000; padding: 0;
+  font-family: "DFKai-SB", "標楷體", "BiauKai", "Kaiti TC", "TW-Kai", "AR PL UKai TW", "KaiTi", serif; }
+/* --k：PDF 成績總表放不下一頁時，所有尺寸一起等比例縮小（不用 transform，html2canvas 處理 transform 會偏移） */
+.sheet-title { font-size: calc(18pt * var(--k, 1)); line-height: 1.25; font-weight: 700; text-align: center; margin: 0 0 calc(30pt * var(--k, 1)); color: #000; font-family: inherit; }
+.sheet-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: calc(12pt * var(--k, 1)); line-height: 1.5; }
+.sheet-table th, .sheet-table td { border: 0.75pt solid #000; padding: calc(1.5pt * var(--k, 1)) calc(5.4pt * var(--k, 1)); vertical-align: middle; text-align: left; color: #000; background: #fff; word-break: break-word; }
+.sheet-table th { font-weight: 400; vertical-align: top; font-size: inherit; letter-spacing: normal; text-transform: none; }
 .sheet-table td.num { text-align: center; }
-.sheet-table tr.tall td { height: 96px; }
-.sheet-table .c-comment { font-size: 13px; line-height: 1.45; }
-.sheet-sum th, .sheet-sum td { padding: 3px 4px; }
-.sheet-sum .c-no { width: 36px; } .sheet-sum .c-title { width: 100px; } .sheet-sum .c-rank { width: 40px; }
-.sheet-sum .c-item { width: 62px; } .sheet-sum .c-total { width: 50px; } .sheet-sum .c-j { width: 38px; }
-.sheet-sum th { font-size: 12px; }
-.sheet-sum .c-comment { width: auto; }
-.sheet-table .cm { margin-bottom: 3px; }
-.sheet-note { font-size: 13px; margin: 6px 0 0; color: #000; }
-.sheet-pdf-root { position: absolute; left: 0; top: 0; width: 1040px; background: #fff; z-index: 0; }   /* 不能用 fixed 或負的 z-index：轉出來會是空白頁 */
-.sheet-pdf-box { width: 1040px; background: #fff; }
+.sheet-table tr.tall td { height: 90pt; }
+.sheet-table .cm + .cm { margin-top: calc(3pt * var(--k, 1)); }
+.sheet-note { font-size: calc(12pt * var(--k, 1)); line-height: 1.5; margin: calc(2pt * var(--k, 1)) 0 0; color: #000; font-family: "PMingLiU", "新細明體", "MingLiU", "Noto Serif TC", serif; }
+.sheet-page { float: right; font-family: "DFKai-SB", "標楷體", "BiauKai", "Kaiti TC", serif; }
+.sheet-opts { gap: 16px; align-items: center; }
+.sheet-opts label { display: inline-flex; gap: 6px; align-items: center; }
+.sheet-opts select { width: auto; }
+/* 成績總表輸出預覽：一張張 A4 橫式（297×210mm、四邊 1.5cm），依面板寬度用 zoom 縮小顯示 */
+.a4-preview { display: flex; flex-direction: column; align-items: center; gap: 0; background: #e9ecef; border-radius: 8px; padding: 10px 0; overflow: hidden; }
+.a4-page { width: 297mm; height: 210mm; padding: 15mm; box-sizing: border-box; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.25); overflow: hidden; margin: 0 0 24px; flex: none; }
+.a4-page:last-child { margin-bottom: 0; }
+.a4-inner { width: 267mm; height: 180mm; outline: 1px dashed #c8ccd0; }
+.sheet-pdf-root { position: absolute; left: 0; top: 0; width: 267mm; background: #fff; z-index: 0; }   /* 不能用 fixed 或負的 z-index：轉出來會是空白頁 */
+.sheet-pdf-box { width: 267mm; background: #fff; }
 .sheet-pdf-cover { position: fixed; inset: 0; z-index: 99999; background: #fff; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; color: #333; }
 @media print { .sheet-scroll { border: 0; padding: 0; } }
-@page { size: A4 landscape; margin: 8mm 10mm; }
+@page { size: A4 landscape; margin: 15mm; }
 .print-all { background: #fff; }
 .print-all .sheet { width: 100%; padding: 0; page-break-after: always; break-after: page; }
 .print-all .sheet:last-child { page-break-after: auto; break-after: auto; }
