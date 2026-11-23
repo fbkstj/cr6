@@ -264,7 +264,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
   /* ───────────── 主辦方：競賽、評分表、評審席位（P3） ───────────── */
 
   const PHASES = ['setup', 'collecting', 'judging', 'settling', 'published'];
-  const PHASE_LABEL = { setup: '準備', collecting: '收件', judging: '評分', settling: '結算', published: '已公布' };
+  const PHASE_LABEL = { setup: '轉檔', collecting: '檢核', judging: '評分', settling: '結算', published: '已公布' };
   const beforeJudging = c => c.phase === 'setup' || c.phase === 'collecting';
   const needBeforeJudging = (c, what) => { if (!beforeJudging(c)) fail(`已經開始評分，不能再${what}`); };
 
@@ -548,7 +548,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
   async function adminJudgingPreview(token) {
     const acc = await auth(token, 'admin');
     const c = await compOf(acc);
-    if (c.phase !== 'collecting') fail('只有「收件」階段可以開始評分');
+    if (c.phase !== 'collecting') fail('只有「檢核」階段可以開始評分');
     return judgingCheck(c);
   }
 

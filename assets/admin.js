@@ -1,14 +1,14 @@
 // 主辦方後台（P3：競賽階段、作品與影片、評審與帳號、評分表、競賽設定、操作紀錄）
 import { call, requireRole, logout, esc, fmtTime, fmtDur, fmtSec, fmtSize, toLocalInput, fromLocalInput,
   toast, dialog, dialogValues, confirmBox, busy, devBanner } from './app.js';
-import { fromRanking, mountSheetPanel } from './sheet.js?v=20261123h';
+import { fromRanking, mountSheetPanel } from './sheet.js?v=20261123i';
 import { splitAiJson } from './aifile.js';
 
 const $ = s => document.querySelector(s);
 const main = $('#main');
 const S = { me: null, board: null, accounts: [], tab: 'overview', teamId: null, versionId: null };
 
-const PHASES = [['setup', '準備'], ['collecting', '收件'], ['judging', '評分'], ['settling', '結算'], ['published', '已公布']];
+const PHASES = [['setup', '轉檔'], ['collecting', '檢核'], ['judging', '評分'], ['settling', '結算'], ['published', '已公布']];
 const STATUS_CHIP = { none: '', received: 'info', pass: 'ok', locked: 'accent', excluded: 'bad' };
 const ACTION = {
   create_competition: '建立競賽', create_account: '新增帳號', update_account: '修改帳號', reset_password: '重設密碼',
@@ -22,6 +22,7 @@ const ACTION = {
 const seatLabel = (n, aiSlot) => `評審${n}${n === aiSlot ? '（AI）' : ''}`;
 const SCORE_CHIP = { none: '', draft: 'info', submitted: 'ok', returned: 'warn' };
 const HIST = { submit: '正式送出', return: '退回', resubmit: '修改後重新送出', reassign: '改派' };
+const phaseName = k => (PHASES.find(p => p[0] === k) || [k, k])[1];
 const beforeJudging = () => ['setup', 'collecting'].includes(S.board.competition.phase);
 const teacherSlots = () => S.board.slots.filter(s => !s.isAi);
 const chip = (label, kind) => `<span class="chip ${kind || ''}">${esc(label)}</span>`;
@@ -32,7 +33,7 @@ async function load() {
   S.accounts = await call('adminListAccounts');
   const c = S.board.competition;
   $('#compName').textContent = c.name;
-  $('#phaseChip').textContent = c.phaseLabel;
+  $('#phaseChip').textContent = phaseName(c.phase);
   document.title = '主辦方後台｜' + c.name;
 }
 async function refresh() { await load(); render(); }
@@ -57,8 +58,10 @@ function viewOverview() {
   const idx = PHASES.findIndex(p => p[0] === c.phase);
   const count = k => teams.filter(t => t.status.key === k).length;
   const actions = {
-    setup: `<button class="btn primary" data-act="phase" data-to="collecting">開始收件</button>`,
-    collecting: `<button class="btn" data-act="phase" data-to="setup">回到準備</button>
+    setup: `<span class="muted">轉檔完成、同步影片清單後，進入人工檢核。</span>
+            <button class="btn primary" data-act="phase" data-to="collecting">進入檢核</button>`,
+    collecting: `<span class="muted">人工檢核：逐組看播放版，合格的到「作品與影片」設為正式版本。</span>
+                 <button class="btn" data-act="phase" data-to="setup">回到轉檔</button>
                  <button class="btn primary" data-act="preview-judging">開始評分（鎖定版本）…</button>`,
     judging: `<span class="muted">評分進行中。所有作品收齊評分後，就可以進入結算。</span>
               <button class="btn" data-act="goto" data-tab="scores">查看評分進度</button>
@@ -75,6 +78,7 @@ function viewOverview() {
     <div class="steps">${PHASES.map((p, i) => `<span class="${i < idx ? 'done' : i === idx ? 'now' : ''}">${i < idx ? '✓ ' : ''}${p[1]}</span>`).join('')}</div>
     <div class="row">${actions}</div>
   </div>
+  ${beforeJudging() ? convertCard() : ''}
   <div class="card stack">
     <h2>作品狀態</h2>
     <div class="stats">
@@ -96,6 +100,63 @@ function viewOverview() {
     <p class="muted small" style="margin:0">老師評審：${c.judgeCount} 人。${teacherSlots().length < c.judgeCount ? `<span class="chip warn">還差 ${c.judgeCount - teacherSlots().length} 位</span>` : chip('已排滿', 'ok')}
       ${c.aiJudge ? `　AI 評審：評審${c.aiSlot}（外部 AI 評完後匯入）。每件作品要收齊 ${c.seats} 份評分。` : '　沒有 AI 評審。'}</p>
   </div>`;
+}
+
+/* 轉檔：原始檔與播放版的資料夾、規格與盤點（轉檔由主辦方電腦上的 tools/process_videos.py 完成） */
+const RAW_DIR = '我的雲端硬碟 › claude › 專題製作評分 › 影片原檔';
+function repoVideosUrl() {
+  const m = location.hostname.match(/^([\w-]+)\.github\.io$/);
+  const repo = location.pathname.split('/').filter(Boolean)[0];
+  return m && repo ? `https://github.com/${m[1]}/${repo}/tree/main/videos` : '';
+}
+function convertCard() {
+  const gh = repoVideosUrl();
+  queueMicrotask(fillInventory);
+  return `<div class="card stack">
+    <h2>轉檔：盤點學生原始檔，轉成評審用的播放版</h2>
+    <div class="table-wrap"><table>
+      <tbody>
+        <tr><th style="width:9em">學生原始檔</th><td><code>${esc(RAW_DIR)}</code>
+          <button class="btn small" data-act="copy-text" data-text="${esc(RAW_DIR)}">複製位置</button>
+          <br><span class="muted small">Google 雲端硬碟（電腦版磁碟代號依電腦而定）。原始檔不公開、不推送。檔名改成 <code>team01_v1.mp4</code>（補件 <code>team01_v2.mp4</code>），原檔名記在同資料夾的 <code>對照表.txt</code></span></td></tr>
+        <tr><th>評審用播放版</th><td><code>專題製作評分 › videos</code>
+          ${gh ? `<a class="btn small" href="${esc(gh)}" target="_blank" rel="noopener">瀏覽資料夾</a>` : ''}
+          <br><span class="muted small">推送後放在公開網站，評審評分時播放這裡的檔案；清單是 <code>videos/manifest.json</code></span></td></tr>
+        <tr><th>原始檔檢查</th><td>MP4／MOV、有影像也有聲音、長度不超過 10:00、檔案不超過 500 MB、可以完整解碼</td></tr>
+        <tr><th>播放版規格</th><td>H.264＋AAC 的 MP4；保留原檔解析度（最高 1080p，不放大）、直式影片自動轉正；每支 75 MB 以內（影片太長、碼率不夠時才降到 720p／480p）</td></tr>
+        <tr><th>誰來轉檔</th><td>請 Claude 在主辦方電腦執行 <code>python tools/process_videos.py</code>（先 <code>--check-only</code> 盤點）→ 經老師同意推送 → 本頁或「作品與影片」按「同步影片清單」</td></tr>
+      </tbody></table></div>
+    <div class="row" style="justify-content:space-between"><b>盤點結果（已轉檔的版本）</b>
+      <button class="btn small" data-act="sync">同步影片清單</button></div>
+    <div id="inventory" class="muted small">讀取影片清單中…</div>
+  </div>`;
+}
+async function fillInventory() {
+  const box = document.getElementById('inventory');
+  if (!box) return;
+  let list;
+  try {
+    const r = await fetch('videos/manifest.json?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    list = (await r.json()).versions || [];
+  } catch (e) { box.textContent = '讀不到影片清單（videos/manifest.json）：' + e.message; return; }
+  if (!list.length) { box.textContent = '還沒有轉好的影片。'; return; }
+  const synced = new Set(S.board.teams.flatMap(t => t.versions.map(v => `${t.code}_v${v.no}`)));
+  const res = (w, h) => (w && h ? `${w}×${h}` : '—');
+  const ok = list.filter(v => v.check_ok).length;
+  box.className = 'stack';
+  box.innerHTML = `<p class="muted small" style="margin:0">共 ${list.length} 個版本：合格 ${ok}、不合格 ${list.length - ok}；已同步到系統 ${list.filter(v => synced.has(`${v.team}_v${v.version}`)).length}。</p>
+    <div class="table-wrap"><table>
+    <thead><tr><th>版本</th><th>原始檔</th><th>長度</th><th>原始解析度</th><th>原檔檢查</th><th>播放版</th><th>系統</th></tr></thead>
+    <tbody>${list.map(v => {
+      const key = `${v.team}_v${v.version}`;
+      return `<tr><td><b>${esc(key)}</b></td>
+        <td class="small">${esc(v.source_filename)}<br><span class="muted">${fmtSize(v.source_size)}</span></td>
+        <td>${fmtDur(v.duration_sec)}</td><td class="small">${res(v.width, v.height)}</td>
+        <td>${v.check_ok ? chip('合格', 'ok') : chip('不合格', 'bad') + `<br><span class="small">${esc(v.check_notes)}</span>`}</td>
+        <td class="small">${v.playback_path ? `${res(v.playback_width, v.playback_height)}<br><span class="muted">${fmtSize(v.playback_size)}</span>` : '—'}</td>
+        <td>${synced.has(key) ? chip('已同步', 'ok') : chip('未同步', 'warn')}</td></tr>`;
+    }).join('')}</tbody></table></div>`;
 }
 
 async function previewJudging(btn) {
@@ -165,7 +226,7 @@ function teamDetail(t) {
           <button class="btn small" data-act="open-version" data-id="${x.id}">檢視</button>
           ${!locked && x.checkOk && x.id !== t.currentVersionId ? `<button class="btn small" data-act="set-current" data-id="${x.id}">設為正式版本</button>` : ''}
         </div></td></tr>`).join('')}</tbody></table></div>`
-    : '<p class="muted">還沒有影片。把影片依規則命名放進「影片原檔」、執行處理腳本並推送後，按「同步影片清單」。</p>'}
+    : '<p class="muted">還沒有影片。把影片依規則命名放進「影片原檔」，轉檔並推送後，按「同步影片清單」（見「競賽階段」的轉檔說明）。</p>'}
   </div>
   ${v ? versionDetail(t, v) : ''}`;
 }
@@ -209,7 +270,7 @@ function viewScores() {
   main.innerHTML = '<div class="card"><p class="muted">載入中…</p></div>';
   call('adminListScores').then(r => {
     if (!r.rows.length) {
-      main.innerHTML = `<div class="card notice">${['setup', 'collecting'].includes(r.phase) ? '還沒有開始評分。影片收齊、設好正式版本後，到「競賽階段」按「開始評分」。' : '沒有進入評分的作品。'}</div>`;
+      main.innerHTML = `<div class="card notice">${['setup', 'collecting'].includes(r.phase) ? '還沒有開始評分。轉檔、人工檢核並設好正式版本後，到「競賽階段」按「開始評分」。' : '沒有進入評分的作品。'}</div>`;
       return;
     }
     const pct = Math.round(r.completeWorks / r.totalWorks * 100);
@@ -839,12 +900,15 @@ main.addEventListener('click', async e => {
     }
     case 'phase': {
       const to = el.dataset.to;
-      const label = { collecting: '開始收件', setup: '回到準備階段', settling: '進入結算', judging: '回到評分階段（可以再退回評分給評審修改）' }[to];
+      const label = { collecting: '進入檢核', setup: '回到轉檔階段', settling: '進入結算', judging: '回到評分階段（可以再退回評分給評審修改）' }[to];
       if (!(await confirmBox(`<p>確定要${label}？</p>`))) return;
       if (await busy(el, () => call('adminSetPhase', to))) { toast('已切換階段'); await refresh(); }
       break;
     }
     case 'preview-judging': await previewJudging(el); break;
+    case 'copy-text':
+      try { await navigator.clipboard.writeText(el.dataset.text); el.textContent = '已複製'; } catch (e) { toast('無法複製，請手動選取文字'); }
+      break;
     case 'ai-import': aiImportPick(); break;
     case 'ai-copy-prompt': await aiCopyPrompt(el.dataset.code || '', el.dataset.cat || ''); break;
     case 'ai-edit': await aiEditDraft(id); break;

@@ -128,7 +128,7 @@ export function createMemDb() {
     /** 同 SQL lock_for_judging：先全部檢查，全部通過才一次寫入 */
     lockForJudging: async (cid, actor) => {
       const c = t.competitions.find(x => x.id === cid);
-      if (c.phase !== 'collecting') raise('只有「收件」階段可以開始評分');
+      if (c.phase !== 'collecting') raise('只有「檢核」階段可以開始評分');
       const n = t.judge_slots.filter(s => s.competition_id === cid && s.slot_no <= c.judge_count
         && t.accounts.some(a => a.id === s.account_id && a.active && a.role === 'judge')).length;
       if (n < c.judge_count) raise(`評審席位還沒排滿（${n} / ${c.judge_count}）`);
