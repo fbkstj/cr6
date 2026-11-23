@@ -255,6 +255,29 @@
       "processed_at": "2026-11-23T08:08:48+00:00"
     },
     {
+      "team": "team55",
+      "version": 1,
+      "source_filename": "創5_多拉A夢的神奇水壺.MOV",
+      "source_sha256": "1e3d863352034b8c3c7714b52e189192b1d7e596e4ba31e2b0f7d1abc600763e",
+      "title": "多拉A夢的神奇水壺",
+      "category": "creative",
+      "source_size": 378108855,
+      "duration_sec": 449.22,
+      "container": "mov,mp4,m4a,3gp,3g2,mj2",
+      "vcodec": "hevc",
+      "acodec": "aac",
+      "width": 1920,
+      "height": 1080,
+      "rotation": 0,
+      "check_ok": true,
+      "check_notes": "解碼時有 1355 則時間戳記不連續的警告（已放寬；播放版已驗證長度與影音一致）",
+      "playback_path": "videos/team55_v1.mp4",
+      "playback_size": 62813618,
+      "playback_width": 1920,
+      "playback_height": 1080,
+      "processed_at": "2026-11-23T08:34:10+00:00"
+    },
+    {
       "team": "team56",
       "version": 1,
       "source_filename": "創6_華語學習AI百寶箱.mp4",
@@ -278,5 +301,5 @@
       "processed_at": "2026-11-23T08:11:01+00:00"
     }
   ],
-  "updated_at": "2026-11-23T08:26:12+00:00"
+  "updated_at": "2026-11-23T08:34:10+00:00"
 }
