@@ -1,7 +1,7 @@
 // 主辦方後台（P3：競賽階段、作品與影片、評審與帳號、評分表、競賽設定、操作紀錄）
 import { call, requireRole, logout, esc, fmtTime, fmtDur, fmtSec, fmtSize, toLocalInput, fromLocalInput,
   toast, dialog, dialogValues, confirmBox, busy, devBanner } from './app.js';
-import { fromRanking, mountSheetPanel } from './sheet.js?v=20261123p';
+import { fromRanking, mountSheetPanel } from './sheet.js?v=20261123r';
 import { splitAiJson } from './aifile.js';
 
 const $ = s => document.querySelector(s);
@@ -602,7 +602,7 @@ function aiVideoUrl(code) {
 /** 給外部 AI 的評分提示詞：依目前的評分表產生，貼到外部 AI 使用 */
 function aiPromptText(url, category) {
   const d = AI.data;
-  const min = Math.max(30, Number(d.minCommentChars) || 0);
+  const min = Math.max(30, Number(d.minCommentChars) || 0), max = Math.max(min, Number(d.maxCommentChars) || 300);
   const cats = ['project', 'creative'];
   const table = cat => d.itemsByCategory[cat].map((it, i) => `${i + 1}. ${it.title}（滿分 ${it.max}）${it.description ? '：' + it.description : ''}`).join('\n');
   const n = Math.max(...cats.map(c => d.itemsByCategory[c].length));
@@ -627,7 +627,7 @@ function aiPromptText(url, category) {
     '2. 只依影片中看得到、聽得到的內容評分，不得臆測影片以外的資訊。',
     '3. 每一項的 score 必須為 0 到該項滿分之間的整數；若真的完全無法從影片判斷，才填 null 並在 reason 寫明原因。',
     '4. 每一項必須附 1～3 個影片時間點作為依據，time 格式為「分:秒」（單一時間點，例如 "0:45"、"3:15"，不可寫區間，且不可超過影片總長度）。',
-    `5. strengths（作品優點）與 improvements（改進建議）請使用繁體中文，各 ${min}～300 字，必須具體指出影片內容。`,
+    `5. strengths（作品優點）與 improvements（改進建議）請使用繁體中文，各 ${Math.min(min, 100)}～100 字（嚴格控制在 100 字以內），必須具體指出影片內容。`,
     '6. 只能輸出「一個合法的 JSON 物件」，前後不可有任何說明文字，也不可加上 ```json 或 ``` 標記。',
     '',
     '輸出格式：',
@@ -638,7 +638,7 @@ function aiPromptText(url, category) {
 /** 標題列的提示詞：一次評全部作品，輸出「專題組、創意組合併」的 JSON（和匯入的合併檔格式相同） */
 function aiPromptAll() {
   const d = AI.data;
-  const min = Math.max(30, Number(d.minCommentChars) || 0);
+  const min = Math.max(30, Number(d.minCommentChars) || 0), max = Math.max(min, Number(d.maxCommentChars) || 300);
   const teams = (S.board ? S.board.teams : []).filter(t => aiVideoUrl(t.code)).sort((a, b) => ['project', 'creative'].indexOf(a.category) - ['project', 'creative'].indexOf(b.category) || a.code.localeCompare(b.code));
   const cats = ['project', 'creative'];
   const table = cat => d.itemsByCategory[cat].map((it, i) => `${i + 1}. ${it.title}（滿分 ${it.max}）${it.description ? '：' + it.description : ''}`).join('\n');
@@ -663,7 +663,7 @@ function aiPromptAll() {
     '2. 只依影片中看得到、聽得到的內容評分，不得臆測影片以外的資訊。',
     '3. 每一項的 score 必須為 0 到該項滿分之間的整數；若真的完全無法從影片判斷，才填 null 並在 reason 寫明原因。',
     '4. 每一項必須附 1～3 個影片時間點作為依據，time 格式為「分:秒」（單一時間點，例如 "0:45"、"3:15"，不可寫區間，且不可超過該影片總長度）。',
-    `5. strengths（作品優點）與 improvements（改進建議）請使用繁體中文，各 ${min}～300 字，必須具體指出影片內容。`,
+    `5. strengths（作品優點）與 improvements（改進建議）請使用繁體中文，各 ${Math.min(min, 100)}～100 字（嚴格控制在 100 字以內），必須具體指出影片內容。`,
     '6. 只能輸出「一個合法的 JSON 物件」（所有作品合在同一個），前後不可有任何說明文字，也不可加上 ```json 或 ``` 標記。',
     '7. 必須分出高下：同一個組別（專題組、創意組各自）內，任兩件作品的 total 不可相同。先比較同組所有作品的整體表現，再給分；若初評出現同分，請依影片中的具體差異（完成度、實際展示、創意、表達）調整單項分數，直到全部不同分。調整後仍須符合第 2、3 項，不可為了拉開分數而虛構內容，每一項的理由與時間點也要和最終分數一致。',
     '',
@@ -769,8 +769,8 @@ async function aiEditDraft(id) {
     ${items.map(it => `<div class="field"><label for="ed-${it.id}">${esc(it.title)}（0～${it.max}）</label>
       <input id="ed-${it.id}" type="number" min="0" max="${it.max}" step="1" value="${res.items[it.id] ?? ''}" style="width:120px">
       <div class="small muted">${esc((res.reasons || {})[it.id] || '')}</div></div>`).join('')}
-    <div class="field"><label for="ed-strengths">作品優點（至少 ${AI.data.minCommentChars} 字）</label><textarea id="ed-strengths" maxlength="2000">${esc(res.strengths)}</textarea></div>
-    <div class="field"><label for="ed-improvements">改進建議（至少 ${AI.data.minCommentChars} 字）</label><textarea id="ed-improvements" maxlength="2000">${esc(res.improvements)}</textarea></div>`, '儲存修改');
+    <div class="field"><label for="ed-strengths">作品優點（${AI.data.minCommentChars}～${AI.data.maxCommentChars || 300} 字）</label><textarea id="ed-strengths" maxlength="${AI.data.maxCommentChars || 300}">${esc(res.strengths)}</textarea></div>
+    <div class="field"><label for="ed-improvements">改進建議（${AI.data.minCommentChars}～${AI.data.maxCommentChars || 300} 字）</label><textarea id="ed-improvements" maxlength="${AI.data.maxCommentChars || 300}">${esc(res.improvements)}</textarea></div>`, '儲存修改');
   if (!ok) return;
   const v = dialogValues;
   const input = { items: Object.fromEntries(items.map(it => [it.id, v['ed-' + it.id] === '' ? null : Number(v['ed-' + it.id])])),
@@ -805,8 +805,8 @@ async function aiFix(id) {
     <p class="small muted" style="margin:0">空白的項目請補上分數；也可以修改 AI 的分數或評語。送出後算成評審${AI.data.aiSlot}的正式評分，補分理由與修改內容會留在紀錄中。</p>
     ${items.map(it => `<div class="field"><label for="fx-${it.id}">${esc(it.title)}（0～${it.max}）${res.items[it.id] === null || res.items[it.id] === undefined ? ' <span class="chip warn">AI 無法判定</span>' : ''}</label>
       <input id="fx-${it.id}" type="number" min="0" max="${it.max}" step="1" value="${res.items[it.id] ?? ''}" style="width:120px"></div>`).join('')}
-    <div class="field"><label for="fx-strengths">作品優點（至少 ${AI.data.minCommentChars} 字）</label><textarea id="fx-strengths" maxlength="2000">${esc(res.strengths)}</textarea></div>
-    <div class="field"><label for="fx-improvements">改進建議（至少 ${AI.data.minCommentChars} 字）</label><textarea id="fx-improvements" maxlength="2000">${esc(res.improvements)}</textarea></div>
+    <div class="field"><label for="fx-strengths">作品優點（${AI.data.minCommentChars}～${AI.data.maxCommentChars || 300} 字）</label><textarea id="fx-strengths" maxlength="${AI.data.maxCommentChars || 300}">${esc(res.strengths)}</textarea></div>
+    <div class="field"><label for="fx-improvements">改進建議（${AI.data.minCommentChars}～${AI.data.maxCommentChars || 300} 字）</label><textarea id="fx-improvements" maxlength="${AI.data.maxCommentChars || 300}">${esc(res.improvements)}</textarea></div>
     <div class="field"><label for="fx-reason">補分理由（必填，例如：主辦人員看過影片 3:10～4:00 的示範後補分）</label><textarea id="fx-reason" maxlength="500"></textarea></div>`, '送出補分');
   if (!ok) return;
   const v = dialogValues;
@@ -910,6 +910,8 @@ function viewSettings() {
       <div class="field"><label class="check"><input type="checkbox" name="aiJudge" ${c.aiJudge ? 'checked' : ''} ${ro ? 'disabled' : ''}> 加入 AI 評審（多一席，分數匯入保存）</label>
         <span class="muted small">AI 坐在最後一席（${c.judgeCount === 0 ? "只有 AI 評分時是評審1，分數一定計入平均" : `${c.judgeCount} 位老師時是評審${c.judgeCount + 1}`}），用外部 AI 評完後，由主辦人員在「AI 評分」分頁匯入評分檔。要不要把 AI 分數計入平均，到「結算與公布」頁勾選（預設計入）。${ro ? '已經開始評分，不能修改。' : ''}</span></div>
       <div class="field"><label>評語最少字數（優點、改進建議各自）</label><input type="number" name="minCommentChars" value="${c.minCommentChars}" min="0" max="200" ${ro ? 'disabled' : ''} style="width:120px"></div>
+      <div class="field"><label>評語最多字數（優點、改進建議各自，30～2000）</label><input type="number" name="maxCommentChars" value="${c.maxCommentChars || 300}" min="30" max="2000" ${ro ? 'disabled' : ''} style="width:120px">
+        <span class="muted small">評審與 AI 的評語超過這個字數會被擋下（AI 匯入檔超過會標成「需要處理」）。複製的 AI 提示詞也會帶入這個範圍。</span></div>
       <label class="check"><input type="checkbox" name="showStatusPage" ${c.showStatusPage ? 'checked' : ''}> 公布前，公開頁顯示各組收件狀態</label>
       <label class="check"><input type="checkbox" name="showItemScores" ${c.showItemScores ? 'checked' : ''}> 公布結果時顯示每位評審的分項分數</label>
       <div><button class="btn primary" type="submit">儲存設定</button></div>
@@ -1133,7 +1135,7 @@ main.addEventListener('submit', async e => {
   } else if (kind === 'settings') {
     const jc = f.querySelector('input[name=judgeCount]:checked');
     const input = { name: f.name.value, showStatusPage: f.showStatusPage.checked, showItemScores: f.showItemScores.checked };
-    if (beforeJudging()) Object.assign(input, { judgeCount: Number(jc.value), minCommentChars: Number(f.minCommentChars.value), aiJudge: f.aiJudge.checked || Number(jc.value) === 0 });
+    if (beforeJudging()) Object.assign(input, { judgeCount: Number(jc.value), minCommentChars: Number(f.minCommentChars.value), maxCommentChars: Number(f.maxCommentChars.value), aiJudge: f.aiJudge.checked || Number(jc.value) === 0 });
     if (await busy(btn, () => call('adminUpdateCompetition', input))) { toast('已儲存設定'); await refresh(); }
   } else if (kind === 'password') {
     if (await busy(btn, () => call('changePassword', f.old.value, f.new.value))) { f.reset(); toast('密碼已修改'); }

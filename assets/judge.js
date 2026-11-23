@@ -46,7 +46,7 @@ async function showWork(teamId) {
   const w = S.work = await call('judgeGetWork', teamId);
   S.dirty = false;
   const sc = w.score, ro = !w.canEdit;
-  const min = w.minCommentChars;
+  const min = w.minCommentChars, max = w.maxCommentChars || 300;
   main.innerHTML = `
   <div class="row" style="margin-bottom:12px"><a href="#" data-act="back">← 回作品清單</a></div>
   <div class="score-layout">
@@ -86,13 +86,13 @@ async function showWork(teamId) {
         </div>`).join('')}
       </div>
       <div class="field">
-        <label for="strengths">作品優點${min ? `（至少 ${min} 字）` : ''}</label>
-        <textarea id="strengths" maxlength="2000" ${ro ? 'disabled' : ''}>${esc(sc.strengths)}</textarea>
+        <label for="strengths">作品優點（${min ? `至少 ${min} 字、` : ''}最多 ${max} 字）</label>
+        <textarea id="strengths" maxlength="${max}" ${ro ? 'disabled' : ''}>${esc(sc.strengths)}</textarea>
         <div class="counter" data-for="strengths"></div>
       </div>
       <div class="field">
-        <label for="improvements">改進建議${min ? `（至少 ${min} 字）` : ''}</label>
-        <textarea id="improvements" maxlength="2000" ${ro ? 'disabled' : ''}>${esc(sc.improvements)}</textarea>
+        <label for="improvements">改進建議（${min ? `至少 ${min} 字、` : ''}最多 ${max} 字）</label>
+        <textarea id="improvements" maxlength="${max}" ${ro ? 'disabled' : ''}>${esc(sc.improvements)}</textarea>
         <div class="counter" data-for="improvements"></div>
       </div>
       <p class="muted small" style="margin:0">評語會公開給學生看，顯示為「評審${w.slot}」，不會顯示你的姓名。</p>
@@ -130,7 +130,7 @@ function updateTotals() {
   ['strengths', 'improvements'].forEach(id => {
     const n = [...document.getElementById(id).value.trim()].length;
     const c = main.querySelector(`.counter[data-for="${id}"]`);
-    c.textContent = `${n} 字`;
+    c.textContent = `${n} / ${w.maxCommentChars || 300} 字`;
     c.classList.toggle('short', n < w.minCommentChars);
   });
   return { tot, filled, bad };

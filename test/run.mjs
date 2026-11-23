@@ -421,6 +421,16 @@ console.log('P3 作品與影片版本');
     await expectErr(/只能是 0（只有 AI）、1、3 或 5/, 'adminUpdateCompetition', admin, { judgeCount: 4 });
   });
 
+  await step('評語最多字數可設定（30～2000，不能少於最少字數）', async () => {
+    assert.equal((await board()).competition.maxCommentChars, 300);
+    await expectErr(/30～2000/, 'adminUpdateCompetition', admin, { maxCommentChars: 20 });
+    await expectErr(/30～2000/, 'adminUpdateCompetition', admin, { maxCommentChars: 2001 });
+    await expectErr(/不能少於最少字數/, 'adminUpdateCompetition', admin, { minCommentChars: 100, maxCommentChars: 50 });
+    const c = (await call('adminUpdateCompetition', admin, { maxCommentChars: 500 })).competition;
+    assert.equal(c.maxCommentChars, 500);
+    await call('adminUpdateCompetition', admin, { maxCommentChars: 300 });
+  });
+
   await step('評審人數可選 1、3、5；AI 另外加一席，可勾選要不要（1 位老師＋AI＝2 份）', async () => {
     const pre = await setup({ judgeCount: 1, teams: 1, aiJudge: false });
     const a2 = (await pre.call('login', 'admin01', 'admin-pass-01')).token;
@@ -587,6 +597,13 @@ console.log('P4 評審評分');
     await expectErr(/還有 3 個項目/, 'judgeSubmit', j1, team('team01'), { items: { [ids[0]]: 35 }, ...GOOD });
     await expectErr(/作品優點」至少要 10 個字/, 'judgeSubmit', j1, team('team01'), { items: items(35, 20, 20, 8), strengths: '很好', improvements: GOOD.improvements });
     await expectErr(/改進建議」至少要 10 個字/, 'judgeSubmit', j1, team('team01'), { items: items(35, 20, 20, 8), strengths: GOOD.strengths, improvements: '　'.repeat(12) });
+  });
+
+  await step('評語超過最多字數（預設 300）被拒，暫存也一樣', async () => {
+    const long = '評'.repeat(301);
+    await expectErr(/評語最多 300 字/, 'judgeSubmit', j1, team('team01'), { items: items(35, 20, 20, 8), strengths: long, improvements: GOOD.improvements });
+    await expectErr(/評語最多 300 字/, 'judgeSaveDraft', j1, team('team01'), { items: items(35, 20, 20, 8), strengths: GOOD.strengths, improvements: long });
+    await call('judgeSaveDraft', j1, team('team01'), { items: items(35, 20, 20, 8), strengths: '評'.repeat(300), improvements: GOOD.improvements });
   });
 
   await step('正式送出成功：總分由伺服器計算（不採用前端傳的總分）', async () => {

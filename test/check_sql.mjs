@@ -155,6 +155,7 @@ let r1 = (await save(j[0], tid, JSON.stringify({ [rItems[0].id]: 40 }), '', '', 
 r1.status === 'draft' && r1.total === null ? ok('暫存可以只填一部分，不計總分') : bad('暫存', JSON.stringify(r1));
 await expectFail('正式送出要每項都給分', `select judge_save($1,$2,$3::jsonb,$4,$4,true)`, [tid, j[0], JSON.stringify({ [rItems[0].id]: 40 }), okText], /還有 2 個項目/);
 await expectFail('正式送出評語要達最少字數', `select judge_save($1,$2,$3::jsonb,'好','很好',true)`, [tid, j[0], sc(40, 20, 10)], /至少要 10 個字/);
+await expectFail('評語超過最多字數（預設 300）被拒', `select judge_save($1,$2,$3::jsonb,$4,'可以補充測試數據與對照組',false)`, [tid, j[0], sc(40, 25, 15), '評'.repeat(301)], /評語最多 300 字/);
 r1 = (await save(j[0], tid, sc(40, 25, 15), okText, '可以補充測試數據與對照組', true)).rows[0].r;
 r1.status === 'submitted' && r1.total === 80 ? ok('正式送出：總分由資料庫計算 = 80') : bad('送出', JSON.stringify(r1));
 await expectOk('送出後評審可以修改（回到暫存中）', `select judge_save($1,$2,$3::jsonb,$4,$4,false)`, [tid, j[0], sc(1, 1, 1), okText]);

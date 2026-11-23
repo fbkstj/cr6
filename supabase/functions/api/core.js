@@ -278,7 +278,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     return {
       id: c.id, name: c.name, phase: c.phase, phaseLabel: PHASE_LABEL[c.phase], judgeCount: c.judge_count,
       aiJudge: !!c.ai_judge, aiCounted: aiCounted(c), seats: seatCount(c), aiSlot: aiSlotOf(c),
-      showStatusPage: !!c.show_status_page, showItemScores: !!c.show_item_scores, minCommentChars: c.min_comment_chars,
+      showStatusPage: !!c.show_status_page, showItemScores: !!c.show_item_scores, minCommentChars: c.min_comment_chars, maxCommentChars: c.max_comment_chars || 300,
     };
   }
 
@@ -342,6 +342,12 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
       if (!Number.isInteger(n) || n < 0 || n > 200) fail('評語最少字數 0～200');
       if (n !== c.min_comment_chars) { needBeforeJudging(c, '改評語最少字數'); patch.min_comment_chars = n; }
     }
+    if (input.maxCommentChars !== undefined) {
+      const n = Number(input.maxCommentChars);
+      if (!Number.isInteger(n) || n < 30 || n > 2000) fail('評語最多字數 30～2000');
+      if (n !== (c.max_comment_chars || 300)) { needBeforeJudging(c, '改評語最多字數'); patch.max_comment_chars = n; }
+    }
+    if ((patch.max_comment_chars ?? c.max_comment_chars ?? 300) < (patch.min_comment_chars ?? c.min_comment_chars)) fail('評語最多字數不能少於最少字數');
     if (!Object.keys(patch).length) return { competition: competitionFull(c) };
     await db.updateCompetition(c.id, patch);
     if (patch.judge_count !== undefined) await db.deleteSlotsAbove(c.id, patch.judge_count);
@@ -640,7 +646,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
       team: { id: t.id, code: t.code, name: t.name, workTitle: t.work_title, workDesc: t.work_desc, category: catOf(t), categoryLabel: CATEGORY_LABEL[catOf(t)] },
       video: { path: v.playback_path, duration: v.duration_sec === null ? null : Number(v.duration_sec), versionNo: v.version_no },
       rubric: await rubricView(c, catOf(t)),
-      minCommentChars: c.min_comment_chars,
+      minCommentChars: c.min_comment_chars, maxCommentChars: c.max_comment_chars || 300,
       slot,
       score: {
         status: sv.status, statusLabel: SCORE_LABEL[sv.status],
@@ -1000,6 +1006,9 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     const min = c.min_comment_chars || 0;
     if ([...result.strengths].length < min) problems.push(`「作品優點」少於 ${min} 個字`);
     if ([...result.improvements].length < min) problems.push(`「改進建議」少於 ${min} 個字`);
+    const max = c.max_comment_chars || 300;
+    if ([...result.strengths].length > max) problems.push(`「作品優點」超過 ${max} 個字`);
+    if ([...result.improvements].length > max) problems.push(`「改進建議」超過 ${max} 個字`);
     return { result, problems };
   }
 
@@ -1043,7 +1052,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     }).sort((a, b) => CATEGORIES.indexOf(a.category) - CATEGORIES.indexOf(b.category) || a.code.localeCompare(b.code));
     return {
       enabled: !!c.ai_judge, phase: c.phase, phaseLabel: PHASE_LABEL[c.phase],
-      canImport: !!c.ai_judge && SCORING_PHASES.includes(c.phase), aiSlot: slot, minCommentChars: c.min_comment_chars,
+      canImport: !!c.ai_judge && SCORING_PHASES.includes(c.phase), aiSlot: slot, minCommentChars: c.min_comment_chars, maxCommentChars: c.max_comment_chars || 300,
       items: (await rubricView(c, 'project')).items,   // 專題組（舊欄位，相容用）
       itemsByCategory: { project: (await rubricView(c, 'project')).items, creative: (await rubricView(c, 'creative')).items }, rows,
     };
@@ -1199,6 +1208,8 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     const min = c.min_comment_chars || 0;
     if ([...strengths].length < min) fail(`「作品優點」至少要 ${min} 個字`);
     if ([...improvements].length < min) fail(`「改進建議」至少要 ${min} 個字`);
+    const max = c.max_comment_chars || 300;
+    if ([...strengths].length > max || [...improvements].length > max) fail(`評語最多 ${max} 個字`);
     const commentsEdited = strengths !== (base.strengths || '') || improvements !== (base.improvements || '');
     if (!Object.keys(changed).length && !commentsEdited) return runView(r);
     const prev = r.manual && r.manual.items ? r.manual.items : {};

@@ -196,7 +196,7 @@ export function createMemDb() {
       }
       strengths = String(strengths || '').trim();
       improvements = String(improvements || '').trim();
-      if (strengths.length > 2000 || improvements.length > 2000) raise('評語最多 2000 字');
+      if ([...strengths].length > c.max_comment_chars || [...improvements].length > c.max_comment_chars) raise(`評語最多 ${c.max_comment_chars} 字`);
       let s = t.scores.find(x => x.team_id === teamId && x.slot_no === slotRow.slot_no);
       if (submit) {
         const missing = ritems.length - Object.keys(clean).length;
@@ -301,7 +301,7 @@ export function createMemDb() {
   db.seedDemo = async ({ judgeCount = 5, teams = 3, aiJudge = false, creative = [] } = {}) => {   // creative：屬於創意組的組別代碼，例如 ['team03']
     const cid = crypto.randomUUID(), rid = crypto.randomUUID(), rid2 = crypto.randomUUID();
     t.competitions.push({ id: cid, name: '測試競賽（合成資料）', active: true, phase: 'setup', judge_count: judgeCount, ai_judge: aiJudge, ai_counted: true, rubric_id: rid, rubric_id_creative: rid2,
-      show_status_page: true, show_item_scores: false, min_comment_chars: 10 });
+      show_status_page: true, show_item_scores: false, min_comment_chars: 10, max_comment_chars: 300 });
     t.rubrics.push({ id: rid, competition_id: cid, name: '預設評分表', category: 'project', version: 1, locked: false });
     t.rubrics.push({ id: rid2, competition_id: cid, name: '創意組評分表', category: 'creative', version: 1, locked: false });
     [['應用及整合性', 40], ['主題與課程相關性', 25], ['創意性', 25], ['內文組織及架構格式', 10]]
