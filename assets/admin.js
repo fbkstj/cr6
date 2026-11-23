@@ -1,7 +1,7 @@
 // 主辦方後台（P3：競賽階段、作品與影片、評審與帳號、評分表、競賽設定、操作紀錄）
 import { call, requireRole, logout, esc, fmtTime, fmtDur, fmtSec, fmtSize, toLocalInput, fromLocalInput,
   toast, dialog, dialogValues, confirmBox, busy, devBanner } from './app.js';
-import { fromRanking, mountSheetPanel } from './sheet.js?v=20261123n';
+import { fromRanking, mountSheetPanel } from './sheet.js?v=20261123o';
 import { splitAiJson } from './aifile.js';
 
 const $ = s => document.querySelector(s);
@@ -219,7 +219,8 @@ function viewWorks() {
       <span class="row">
         ${beforeJudging()
           ? `<button class="btn small primary" data-act="sync" title="讀取已推送的影片清單：還沒建立的組別自動帶入組別名稱、作品名稱、類別，確認後建立並登錄影片">⚡ 快速帶入</button>
-             <button class="btn small" data-act="new-team">＋ 新增</button>`
+             <button class="btn small" data-act="new-team">＋ 新增</button>
+             <button class="btn small" data-act="set-current-all" title="每一組都把最新的合格版本設為正式版本">全部設為正式版本</button>`
           : '<button class="btn small" data-act="sync">同步影片清單</button>'}
       </span>
     </div>
@@ -1034,6 +1035,28 @@ main.addEventListener('click', async e => {
     case 'set-current': {
       const t = S.board.teams.find(x => x.id === S.teamId);
       if (await busy(el, () => call('adminSetCurrentVersion', t.id, id))) { S.versionId = id; toast('已設為正式版本（開始評分時會鎖定這個版本）'); await refresh(); }
+      break;
+    }
+    case 'set-current-all': {
+      const todo = [], noOk = [];
+      for (const t of S.board.teams) {
+        const best = t.versions.filter(x => x.checkOk).sort((a, b) => b.no - a.no)[0];
+        if (!best) { noOk.push(t.code); continue; }
+        if (best.id !== t.currentVersionId) todo.push({ t, v: best });
+      }
+      if (!todo.length) { toast(noOk.length ? `沒有可設定的組別（${noOk.join('、')} 沒有合格版本）` : '每一組都已經是最新的合格版本'); break; }
+      const html = `<h2>全部設為正式版本</h2><p>以下 ${todo.length} 組會把「最新的合格版本」設為正式版本：</p>
+        <ul>${todo.map(({ t, v }) => `<li>${esc(t.code)} ${esc(t.workTitle || t.name)}：v${v.no}</li>`).join('')}</ul>
+        ${noOk.length ? `<div class="notice warn">沒有合格版本、不會設定：${esc(noOk.join('、'))}</div>` : ''}`;
+      if (!(await confirmBox(html, '確定設定'))) return;
+      el.disabled = true;
+      let ok = 0;
+      try {
+        for (const { t, v } of todo) { await call('adminSetCurrentVersion', t.id, v.id); ok++; }
+        toast(`已設定 ${ok} 組的正式版本`);
+      } catch (e) { toast(`已設定 ${ok} 組，之後失敗：${e.message}`, 'bad'); }
+      el.disabled = false;
+      await refresh();
       break;
     }
     case 'assign': {

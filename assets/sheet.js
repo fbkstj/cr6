@@ -3,7 +3,7 @@
 // 版面：標題「{競賽名稱}評分表(專題組)」；欄位 編號｜題目｜各評分項目(配分%)｜總分｜評語。
 // 每一組別有一張「平均」成績表（含名次、各評審總分），以及每位評審各一張（和原 Word 檔一樣有評語欄）。
 import { esc } from './app.js';
-import { downloadDocx } from './word.js?v=20261123n';
+import { downloadDocx } from './word.js?v=20261123o';
 
 const PREFIX = { project: '專', creative: '創' };
 const PDF_LIB = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
