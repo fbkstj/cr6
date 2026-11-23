@@ -304,6 +304,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     if (!c.ai_judge) fail('這個競賽沒有開啟 AI 評審');
     if (c.phase === 'published') fail('已經公布，要修改請先撤回公布');
     counted = !!counted;
+    if (!counted && c.judge_count === 0) fail('只有 AI 評分時，AI 分數一定要計入平均');
     if (counted !== aiCounted(c)) {
       await db.updateCompetition(c.id, { ai_counted: counted });
       await log(acc, 'set_ai_counted', counted ? '計入平均' : '不計入平均', { counted });
@@ -323,13 +324,17 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     }
     if (input.judgeCount !== undefined && Number(input.judgeCount) !== c.judge_count) {
       needBeforeJudging(c, '改評審人數');
-      if (![1, 3, 5].includes(Number(input.judgeCount))) fail('評審人數只能是 1、3 或 5');
+      if (![0, 1, 3, 5].includes(Number(input.judgeCount))) fail('評審人數只能是 0（只有 AI）、1、3 或 5');
       patch.judge_count = Number(input.judgeCount);
     }
     if (input.aiJudge !== undefined && !!input.aiJudge !== !!c.ai_judge) {
       needBeforeJudging(c, (input.aiJudge ? '加入' : '取消') + ' AI 評審');
       patch.ai_judge = !!input.aiJudge;
     }
+    // 只有 AI 評分（老師 0 人）：一定要有 AI 評審，而且 AI 分數計入平均（同 SQL competitions_ai_only_check）
+    const finalCount = patch.judge_count ?? c.judge_count, finalAi = patch.ai_judge ?? !!c.ai_judge;
+    if (finalCount === 0 && !finalAi) fail('只有 AI 評分（老師評審 0 人）時，要勾選「加入 AI 評審」');
+    if (finalCount === 0 && c.ai_counted === false) patch.ai_counted = true;
     if (input.showStatusPage !== undefined) patch.show_status_page = !!input.showStatusPage;
     if (input.showItemScores !== undefined) patch.show_item_scores = !!input.showItemScores;
     if (input.minCommentChars !== undefined) {
@@ -339,7 +344,7 @@ export function createApi({ db, secret, now = () => Date.now(), siteBaseUrl = ''
     }
     if (!Object.keys(patch).length) return { competition: competitionFull(c) };
     await db.updateCompetition(c.id, patch);
-    if (patch.judge_count) await db.deleteSlotsAbove(c.id, patch.judge_count);
+    if (patch.judge_count !== undefined) await db.deleteSlotsAbove(c.id, patch.judge_count);
     await log(acc, 'update_competition', c.name, patch);
     return { competition: competitionFull(Object.assign({}, c, patch)) };
   }

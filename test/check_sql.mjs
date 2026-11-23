@@ -110,7 +110,7 @@ await expectOk('儲存評分表（3 項 50／30／20）', `select save_rubric($1
 const ri = (await db.query(`select title, max_score, sort from rubric_items where rubric_id=$1 order by sort`, [rid])).rows;
 ri.length === 3 && ri[0].title === '應用' && ri[2].sort === 3 ? ok('評分表項目與順序正確') : bad('評分表項目', JSON.stringify(ri));
 
-await expectFail('setup 階段不能開始評分', `select lock_for_judging($1, $2)`, [cid, good], /「收件」/);
+await expectFail('setup 階段不能開始評分', `select lock_for_judging($1, $2)`, [cid, good], /「檢核」/);
 await db.query(`update competitions set phase='collecting' where id=$1`, [cid]);
 await expectFail('評審席位沒排滿不能開始評分', `select lock_for_judging($1, $2)`, [cid, good], /席位還沒排滿（1 \/ 5）/);
 for (let i = 2; i <= 5; i++) await db.query(`insert into judge_slots(competition_id, slot_no, account_id) values($1,$2,$3)`, [cid, i, j[i - 1]]);
@@ -133,7 +133,7 @@ lr.locked === 1 && JSON.stringify(lr.excluded) === '["team02"]' ? ok('開始評�
 const after = (await db.query(`select c.phase, rb.locked from competitions c join rubrics rb on rb.id=c.rubric_id where c.id=$1`, [cid])).rows[0];
 after.phase === 'judging' && after.locked ? ok('階段改為 judging，評分表鎖定') : bad('鎖版後狀態', JSON.stringify(after));
 await expectFail('評分表鎖定後不能修改', `select save_rubric($1, $2::jsonb)`, [rid, JSON.stringify([{ title: 'X', max_score: 100 }])], /已鎖定/);
-await expectFail('評分階段不能重複鎖版', `select lock_for_judging($1, $2)`, [cid, good], /「收件」/);
+await expectFail('評分階段不能重複鎖版', `select lock_for_judging($1, $2)`, [cid, good], /「檢核」/);
 const lg = (await db.query(`select count(*)::int n from admin_logs where action='lock_for_judging'`)).rows[0].n;
 lg === 1 ? ok('鎖版寫入操作紀錄') : bad('鎖版紀錄', lg);
 const fp = (await db.query(`select has_function_privilege('anon','lock_for_judging(uuid,uuid)','execute') a, has_function_privilege('anon','save_rubric(uuid,jsonb)','execute') b`)).rows[0];
@@ -313,6 +313,24 @@ await expectFail('創意組作品不能用專題組評分表的項目', `select 
 await expectFail('專題組作品不能用創意組評分表的項目', `select judge_save($1,$2,$3::jsonb,'','',false)`, [tP, jk[0], scoreOf(rk)], /不在評分表上/);
 const rsub = (await db.query(`select judge_save($1,$2,$3::jsonb,$4,$4,true) r`, [tK, jk[0], scoreOf(rk), okText])).rows[0].r;
 rsub.status === 'submitted' && rsub.total === 100 ? ok('創意組作品依創意組評分表計分') : bad('創意組計分', JSON.stringify(rsub));
+
+/* ───── 只有 AI 評分（老師評審 0 人，2026-11-23） ───── */
+await db.query(`update competitions set active=false`);
+const cidAi = (await db.query(`select create_competition('只有AI','admin-ai','主辦','password123',1) id`)).rows[0].id;
+const adminAi = (await db.query(`select id from accounts where login_id='admin-ai'`)).rows[0].id;
+await expectFail('評審人數 0 但沒有開 AI 被拒', `update competitions set judge_count=0, ai_judge=false where id=$1`, [cidAi], /ai_only/);
+await expectFail('評審人數 0 但 AI 不計入平均被拒', `update competitions set judge_count=0, ai_judge=true, ai_counted=false where id=$1`, [cidAi], /ai_only/);
+await expectOk('評審人數 0＋AI 計入平均可以設定', `update competitions set judge_count=0, ai_judge=true, ai_counted=true where id=$1`, [cidAi]);
+await expectFail('評審人數 2 仍然被拒', `update competitions set judge_count=2 where id=$1`, [cidAi], /judge_count/);
+const tAi = (await db.query(`insert into teams(competition_id, code, name) values($1,'team01','甲') returning id`, [cidAi])).rows[0].id;
+const vAi = (await db.query(`insert into video_versions(competition_id, team_id, version_no, source_filename, source_sha256, source_size, check_ok, playback_path) values($1,$2,1,'a.mp4',$3,1,true,'videos/team01_v1.mp4') returning id`, [cidAi, tAi, 'e'.repeat(64)])).rows[0].id;
+await db.query(`insert into team_current(team_id, version_id) values($1,$2)`, [tAi, vAi]);
+await db.query(`update competitions set phase='collecting' where id=$1`, [cidAi]);
+await expectOk('只有 AI：可以開始評分（不需要老師席位）', `select lock_for_judging($1,$2)`, [cidAi, adminAi]);
+const slotsAi = (await db.query(`select s.slot_no, a.role from judge_slots s join accounts a on a.id=s.account_id where s.competition_id=$1`, [cidAi])).rows;
+slotsAi.length === 1 && slotsAi[0].slot_no === 1 && slotsAi[0].role === 'ai' ? ok('只有 AI：AI 坐評審1') : bad('AI 席位', JSON.stringify(slotsAi));
+const seatAi = (await db.query(`select seat_count(c) n from competitions c where id=$1`, [cidAi])).rows[0].n;
+seatAi === 1 ? ok('只有 AI：每件作品收齊 1 份') : bad('seat_count', String(seatAi));
 
 console.log(`\n通過 ${pass}，失敗 ${failN}`);
 process.exit(failN ? 1 : 0);

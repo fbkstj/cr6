@@ -418,7 +418,7 @@ console.log('P3 作品與影片版本');
     const b = await board();
     assert.equal(b.competition.judgeCount, 3);
     assert.deepEqual(b.slots.map(s => s.slot), [1, 2, 3]);
-    await expectErr(/只能是 1、3 或 5/, 'adminUpdateCompetition', admin, { judgeCount: 4 });
+    await expectErr(/只能是 0（只有 AI）、1、3 或 5/, 'adminUpdateCompetition', admin, { judgeCount: 4 });
   });
 
   await step('評審人數可選 1、3、5；AI 另外加一席，可勾選要不要（1 位老師＋AI＝2 份）', async () => {
@@ -906,6 +906,36 @@ const aiReply = (scores, extra) => Object.assign({
     c = (await pre.call('adminUpdateCompetition', admin, { aiJudge: false })).competition;
     assert.deepEqual([c.aiJudge, c.seats, c.aiSlot], [false, 3, null]);
     await expectErrOf(pre, /沒有開啟 AI 評審/, 'adminAiLocalBegin', admin, 'x');
+  });
+
+  await step('只有 AI 評分（老師 0 人）：一定要開 AI、AI 坐評審1、一定計入平均', async () => {
+    const pre = await setup({ judgeCount: 1, teams: 1, aiJudge: false });
+    const a = (await pre.call('login', 'admin01', 'admin-pass-01')).token;
+    await expectErrOf(pre, /要勾選「加入 AI 評審」/, 'adminUpdateCompetition', a, { judgeCount: 0 });
+    let c = (await pre.call('adminUpdateCompetition', a, { judgeCount: 0, aiJudge: true })).competition;
+    assert.deepEqual([c.judgeCount, c.aiJudge, c.aiCounted, c.seats, c.aiSlot], [0, true, true, 1, 1]);
+    assert.deepEqual((await pre.call('adminGetBoard', a)).slots, [], '老師席位全部移除');
+    await expectErrOf(pre, /要勾選「加入 AI 評審」/, 'adminUpdateCompetition', a, { aiJudge: false });
+    await expectErrOf(pre, /席位編號要是 1～0/, 'adminAssignSlot', a, 1, null);
+    c = (await pre.call('adminUpdateCompetition', a, { judgeCount: 1 })).competition;
+    assert.deepEqual([c.judgeCount, c.seats, c.aiSlot], [1, 2, 2], '可以改回 1 位老師＋AI');
+  });
+
+  await step('只有 AI 評分：開始評分、匯入 AI 分數後就收齊，可以結算，平均＝AI 總分', async () => {
+    const x = await judgingSetup(0, { teams: 2, fail: [], aiJudge: true });
+    assert.deepEqual(x.board.slots.map(s => [s.slot, s.isAi]), [[1, true]]);
+    await expectErrOf(x, /一定要計入平均/, 'adminSetAiCounted', x.admin, false);
+    let r = await x.call('adminRanking', x.admin);
+    assert.equal(r.judgeCount, 1);
+    for (const [code, sc] of [['team01', [30, 20, 20, 8]], ['team02', [35, 20, 22, 9]]]) {
+      const b = await x.call('adminAiLocalBegin', x.admin, x.team(code), false, '外部 AI（匯入檔案）');
+      await x.call('adminAiLocalFinish', x.admin, b.runId, { text: JSON.stringify(aiReply(sc)), usage: {} });
+    }
+    r = await x.call('adminRanking', x.admin);
+    const rows = r.categories.flatMap(cat => cat.rows);
+    assert.deepEqual(rows.map(y => [y.code, y.average, y.rank]).sort(), [['team01', 78, 2], ['team02', 86, 1]]);
+    assert.equal(r.incomplete.length, 0);
+    await x.call('adminSetPhase', x.admin, 'settling');
   });
 
   const { db, call, expectErr, admin, judges, team, ids, items, board } = await judgingSetup(3, { aiJudge: true });

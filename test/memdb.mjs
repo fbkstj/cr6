@@ -32,7 +32,14 @@ export function createMemDb() {
     /* 競賽 */
     getCompetition: async id => clone(t.competitions.find(c => c.id === id) || null),
     getActiveCompetition: async () => clone(t.competitions.find(c => c.active) || null),
-    updateCompetition: async (id, patch) => { Object.assign(t.competitions.find(c => c.id === id), clone(patch)); },
+    updateCompetition: async (id, patch) => {
+      const c = t.competitions.find(x => x.id === id);
+      const next = Object.assign({}, c, clone(patch));
+      // 同 SQL：評審人數 0／1／3／5；0 人（只有 AI）時要開啟 AI 評審且 AI 計入平均
+      if (![0, 1, 3, 5].includes(next.judge_count)) raise('competitions_judge_count_check');
+      if (next.judge_count === 0 && !(next.ai_judge && next.ai_counted !== false)) raise('competitions_ai_only_check');
+      Object.assign(c, clone(patch));
+    },
 
     /* 帳號 */
     getAccount: async id => strip(t.accounts.find(a => a.id === id)),

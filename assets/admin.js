@@ -1,7 +1,7 @@
 // 主辦方後台（P3：競賽階段、作品與影片、評審與帳號、評分表、競賽設定、操作紀錄）
 import { call, requireRole, logout, esc, fmtTime, fmtDur, fmtSec, fmtSize, toLocalInput, fromLocalInput,
   toast, dialog, dialogValues, confirmBox, busy, devBanner } from './app.js';
-import { fromRanking, mountSheetPanel } from './sheet.js?v=20261123m';
+import { fromRanking, mountSheetPanel } from './sheet.js?v=20261123n';
 import { splitAiJson } from './aifile.js';
 
 const $ = s => document.querySelector(s);
@@ -97,8 +97,8 @@ function viewOverview() {
   </div>
   <div class="card stack">
     <h2>評審席位</h2>
-    <p class="muted small" style="margin:0">老師評審：${c.judgeCount} 人。${teacherSlots().length < c.judgeCount ? `<span class="chip warn">還差 ${c.judgeCount - teacherSlots().length} 位</span>` : chip('已排滿', 'ok')}
-      ${c.aiJudge ? `　AI 評審：評審${c.aiSlot}（外部 AI 評完後匯入）。每件作品要收齊 ${c.seats} 份評分。` : '　沒有 AI 評審。'}</p>
+    <p class="muted small" style="margin:0">${c.judgeCount === 0 ? `<b>只有 AI 評分</b>：沒有老師評審，AI 評審是評審${c.aiSlot}（外部 AI 評完後在「AI 評分」分頁匯入），每件作品收齊 1 份 AI 評分就能結算。` : `老師評審：${c.judgeCount} 人。${teacherSlots().length < c.judgeCount ? `<span class="chip warn">還差 ${c.judgeCount - teacherSlots().length} 位</span>` : chip('已排滿', 'ok')}
+      ${c.aiJudge ? `　AI 評審：評審${c.aiSlot}（外部 AI 評完後匯入）。每件作品要收齊 ${c.seats} 份評分。` : '　沒有 AI 評審。'}`}</p>
   </div>`;
 }
 
@@ -200,7 +200,7 @@ async function previewJudging(btn) {
     ${p.problems.length ? `<div class="notice bad"><b>還不能開始：</b><ul style="margin:.4em 0 0 1.2em;padding:0">${p.problems.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
     <div><b>會進入評分（${p.willLock.length} 組）：</b> ${p.willLock.map(esc).join('、') || '無'}</div>
     <div><b>不進入評分（${p.excluded.length} 組）：</b> ${p.excluded.map(e => `${esc(e.code)}（${esc(e.reason)}）`).join('、') || '無'}</div>
-    <div><b>評審：</b>老師 ${S.board.competition.judgeCount} 人${S.board.competition.aiJudge ? `＋AI 評審（評審${S.board.competition.aiSlot}），每件作品收齊 ${S.board.competition.seats} 份` : '（沒有 AI 評審）'}</div>
+    <div><b>評審：</b>${S.board.competition.judgeCount === 0 ? `只有 AI 評分（AI 評審＝評審${S.board.competition.aiSlot}，每件作品收齊 1 份）` : `老師 ${S.board.competition.judgeCount} 人${S.board.competition.aiJudge ? `＋AI 評審（評審${S.board.competition.aiSlot}），每件作品收齊 ${S.board.competition.seats} 份` : '（沒有 AI 評審）'}`}</div>
     ${p.problems.length ? '' : '<div class="notice warn">開始評分後，<b>不能再更換正式版本、評分表、評審人數與 AI 評審設定</b>。</div>'}`;
   if (p.problems.length) { await dialog(html, [{ label: '知道了', value: false, primary: true }]); return; }
   if (!(await confirmBox(html, '確定開始評分'))) return;
@@ -470,7 +470,8 @@ function settleHtml(r) {
   <div class="card stack">
     <div class="row" style="justify-content:space-between"><h2 style="margin:0">結算與公布</h2><div class="row">${actions}</div></div>
     ${status}
-    ${r.aiEnabled ? `<label class="check"><input type="checkbox" data-act="ai-counted" ${r.aiCounted ? 'checked' : ''} ${r.phase === 'published' ? 'disabled' : ''}> 平均計入 AI 評審的分數（AI 分數照樣保存；不勾選時 AI 只當參考，不影響平均、名次與公布）</label>${r.phase === 'published' ? '<div class="small muted">已公布，要改請先撤回。</div>' : ''}` : ''}
+    ${r.aiEnabled && S.board.competition.judgeCount === 0 ? '<div class="small muted">只有 AI 評分：平均就是 AI 評審的分數。</div>' : ''}
+    ${r.aiEnabled && S.board.competition.judgeCount > 0 ? `<label class="check"><input type="checkbox" data-act="ai-counted" ${r.aiCounted ? 'checked' : ''} ${r.phase === 'published' ? 'disabled' : ''}> 平均計入 AI 評審的分數（AI 分數照樣保存；不勾選時 AI 只當參考，不影響平均、名次與公布）</label>${r.phase === 'published' ? '<div class="small muted">已公布，要改請先撤回。</div>' : ''}` : ''}
     <p class="muted small" style="margin:0">平均 = ${N} 位評審${r.aiCounted ? `（含 AI 評審＝評審${r.aiSlot}）` : r.aiEnabled ? '（AI 評審分數不計入）' : ''}總分的和 ÷ ${N}。名次比的是未四捨五入的平均；專題組、創意組各自排名；同分時由主辦方決定先後或並列，並填寫理由。</p>
   </div>
   ${r.ties.length ? `<div class="card stack"><h2>同分處理</h2>${ties}</div>` : ''}
@@ -826,9 +827,10 @@ function viewJudges() {
   }).join('');
   return `
   <div class="card stack">
-    <h2>評審席位（${c.judgeCount} 人）</h2>
-    <p class="muted small" style="margin:0">公開結果只顯示「評審1～${c.seats}」，不顯示姓名${c.aiJudge ? `，也不標示哪一位是 AI（AI 評審固定是評審${c.aiSlot}，不用指派）` : ''}。${beforeJudging() ? '' : '評分已開始，更換評審（替補）需要填寫原因。'}</p>
-    <div class="table-wrap"><table><thead><tr><th>席位</th><th>評審</th><th></th></tr></thead><tbody>${slotRows}</tbody></table></div>
+    <h2>評審席位（${c.judgeCount === 0 ? '只有 AI 評分' : c.judgeCount + ' 人'}）</h2>
+    ${c.judgeCount === 0 ? '<p class="small" style="margin:0">目前設定為<b>只有 AI 評分</b>：不需要指派老師評審（評審帳號保留，之後改回 1／3／5 人時再指派）。要改人數請到「競賽設定」。</p>' : ''}
+    <p class="muted small" style="margin:0">公開結果只顯示「${c.seats > 1 ? `評審1～${c.seats}` : "評審1"}」，不顯示姓名${c.aiJudge ? `，也不標示哪一位是 AI（AI 評審固定是評審${c.aiSlot}，不用指派）` : ''}。${beforeJudging() ? '' : '評分已開始，更換評審（替補）需要填寫原因。'}</p>
+    <div class="table-wrap"><table><thead><tr><th>席位</th><th>評審</th><th></th></tr></thead><tbody>${slotRows || '<tr><td colspan="3" class="muted">沒有老師評審席位</td></tr>'}</tbody></table></div>
   </div>
   <div class="card stack">
     <h2>帳號</h2>
@@ -900,10 +902,11 @@ function viewSettings() {
       <h2>競賽設定</h2>
       <div class="field"><label>競賽名稱</label><input type="text" name="name" value="${esc(c.name)}" maxlength="100" required></div>
       <div class="field"><label>評審人數</label>
-        <div class="row">${[1, 3, 5].map(n => `<label class="check"><input type="radio" name="judgeCount" value="${n}" ${c.judgeCount === n ? 'checked' : ''} ${ro ? 'disabled' : ''}> ${n} 人</label>`).join('')}</div>
-        ${ro ? '<span class="muted small">已經開始評分，不能修改。</span>' : '<span class="muted small">減少人數時，多出來的席位會被移除。</span>'}</div>
+        <div class="row">${[1, 3, 5].map(n => `<label class="check"><input type="radio" name="judgeCount" value="${n}" ${c.judgeCount === n ? 'checked' : ''} ${ro ? 'disabled' : ''}> ${n} 人</label>`).join('')}
+          <label class="check"><input type="radio" name="judgeCount" value="0" ${c.judgeCount === 0 ? 'checked' : ''} ${ro ? 'disabled' : ''}> 只有 AI 評分（不需要老師評審）</label></div>
+        ${ro ? '<span class="muted small">已經開始評分，不能修改。</span>' : '<span class="muted small">減少人數時，多出來的席位會被移除。選「只有 AI 評分」時會自動勾選「加入 AI 評審」，AI 分數就是成績。</span>'}</div>
       <div class="field"><label class="check"><input type="checkbox" name="aiJudge" ${c.aiJudge ? 'checked' : ''} ${ro ? 'disabled' : ''}> 加入 AI 評審（多一席，分數匯入保存）</label>
-        <span class="muted small">AI 坐在最後一席（${c.judgeCount} 位老師時是評審${c.judgeCount + 1}），用外部 AI 評完後，由主辦人員在「AI 評分」分頁匯入評分檔。要不要把 AI 分數計入平均，到「結算與公布」頁勾選（預設計入）。${ro ? '已經開始評分，不能修改。' : ''}</span></div>
+        <span class="muted small">AI 坐在最後一席（${c.judgeCount === 0 ? "只有 AI 評分時是評審1，分數一定計入平均" : `${c.judgeCount} 位老師時是評審${c.judgeCount + 1}`}），用外部 AI 評完後，由主辦人員在「AI 評分」分頁匯入評分檔。要不要把 AI 分數計入平均，到「結算與公布」頁勾選（預設計入）。${ro ? '已經開始評分，不能修改。' : ''}</span></div>
       <div class="field"><label>評語最少字數（優點、改進建議各自）</label><input type="number" name="minCommentChars" value="${c.minCommentChars}" min="0" max="200" ${ro ? 'disabled' : ''} style="width:120px"></div>
       <label class="check"><input type="checkbox" name="showStatusPage" ${c.showStatusPage ? 'checked' : ''}> 公布前，公開頁顯示各組收件狀態</label>
       <label class="check"><input type="checkbox" name="showItemScores" ${c.showItemScores ? 'checked' : ''}> 公布結果時顯示每位評審的分項分數</label>
@@ -1106,7 +1109,7 @@ main.addEventListener('submit', async e => {
   } else if (kind === 'settings') {
     const jc = f.querySelector('input[name=judgeCount]:checked');
     const input = { name: f.name.value, showStatusPage: f.showStatusPage.checked, showItemScores: f.showItemScores.checked };
-    if (beforeJudging()) Object.assign(input, { judgeCount: Number(jc.value), minCommentChars: Number(f.minCommentChars.value), aiJudge: f.aiJudge.checked });
+    if (beforeJudging()) Object.assign(input, { judgeCount: Number(jc.value), minCommentChars: Number(f.minCommentChars.value), aiJudge: f.aiJudge.checked || Number(jc.value) === 0 });
     if (await busy(btn, () => call('adminUpdateCompetition', input))) { toast('已儲存設定'); await refresh(); }
   } else if (kind === 'password') {
     if (await busy(btn, () => call('changePassword', f.old.value, f.new.value))) { f.reset(); toast('密碼已修改'); }
