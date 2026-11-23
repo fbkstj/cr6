@@ -1,7 +1,7 @@
 // 主辦方後台（P3：競賽階段、作品與影片、評審與帳號、評分表、競賽設定、操作紀錄）
 import { call, requireRole, logout, esc, fmtTime, fmtDur, fmtSec, fmtSize, toLocalInput, fromLocalInput,
   toast, dialog, dialogValues, confirmBox, busy, devBanner } from './app.js';
-import { fromRanking, mountSheetPanel } from './sheet.js?v=20261123r';
+import { fromRanking, mountSheetPanel } from './sheet.js?v=20261123s';
 import { splitAiJson } from './aifile.js';
 
 const $ = s => document.querySelector(s);
@@ -627,7 +627,7 @@ function aiPromptText(url, category) {
     '2. 只依影片中看得到、聽得到的內容評分，不得臆測影片以外的資訊。',
     '3. 每一項的 score 必須為 0 到該項滿分之間的整數；若真的完全無法從影片判斷，才填 null 並在 reason 寫明原因。',
     '4. 每一項必須附 1～3 個影片時間點作為依據，time 格式為「分:秒」（單一時間點，例如 "0:45"、"3:15"，不可寫區間，且不可超過影片總長度）。',
-    `5. strengths（作品優點）與 improvements（改進建議）請使用繁體中文，各 ${Math.min(min, 100)}～100 字（嚴格控制在 100 字以內），必須具體指出影片內容。`,
+    `5. strengths（作品優點）與 improvements（改進建議）請使用繁體中文，各 10～35 字（嚴格控制在 35 字以內，簡短扼要），必須具體指出影片內容。`,
     '6. 只能輸出「一個合法的 JSON 物件」，前後不可有任何說明文字，也不可加上 ```json 或 ``` 標記。',
     '',
     '輸出格式：',
@@ -663,7 +663,7 @@ function aiPromptAll() {
     '2. 只依影片中看得到、聽得到的內容評分，不得臆測影片以外的資訊。',
     '3. 每一項的 score 必須為 0 到該項滿分之間的整數；若真的完全無法從影片判斷，才填 null 並在 reason 寫明原因。',
     '4. 每一項必須附 1～3 個影片時間點作為依據，time 格式為「分:秒」（單一時間點，例如 "0:45"、"3:15"，不可寫區間，且不可超過該影片總長度）。',
-    `5. strengths（作品優點）與 improvements（改進建議）請使用繁體中文，各 ${Math.min(min, 100)}～100 字（嚴格控制在 100 字以內），必須具體指出影片內容。`,
+    `5. strengths（作品優點）與 improvements（改進建議）請使用繁體中文，各 10～35 字（嚴格控制在 35 字以內，簡短扼要），必須具體指出影片內容。`,
     '6. 只能輸出「一個合法的 JSON 物件」（所有作品合在同一個），前後不可有任何說明文字，也不可加上 ```json 或 ``` 標記。',
     '7. 必須分出高下：同一個組別（專題組、創意組各自）內，任兩件作品的 total 不可相同。先比較同組所有作品的整體表現，再給分；若初評出現同分，請依影片中的具體差異（完成度、實際展示、創意、表達）調整單項分數，直到全部不同分。調整後仍須符合第 2、3 項，不可為了拉開分數而虛構內容，每一項的理由與時間點也要和最終分數一致。',
     '',
